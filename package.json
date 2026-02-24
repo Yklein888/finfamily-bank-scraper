@@ -15,11 +15,10 @@
     "@supabase/supabase-js": "^2.39.0",
     "dotenv": "^16.3.1",
     "node-cron": "^3.0.3",
-    "puppeteer": "^21.6.1",
     "@sparticuz/chromium": "^131.0.1"
   },
   "overrides": {
-    "puppeteer": "npm:puppeteer-core@^21.6.1"
+    "puppeteer": "npm:puppeteer-core@6.0.0"
   },
   "engines": {
     "node": ">=18"
