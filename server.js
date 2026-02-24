@@ -13,15 +13,14 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Supabase client
+// Supabase client (service role for DB writes)
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
 
-// מיפוי שמות בנקים וכרטיסים לסוגים של israeli-bank-scrapers
+// Provider map - israeli-bank-scrapers CompanyTypes
 const PROVIDER_MAP = {
-  // בנקים
   'hapoalim':     CompanyTypes.hapoalim,
   'leumi':        CompanyTypes.leumi,
   'discount':     CompanyTypes.discount,
@@ -30,7 +29,6 @@ const PROVIDER_MAP = {
   'union':        CompanyTypes.unionBank,
   'beinleumi':    CompanyTypes.beinleumi,
   'massad':       CompanyTypes.massad,
-  // כרטיסי אשראי
   'isracard':     CompanyTypes.isracard,
   'cal':          CompanyTypes.cal,
   'max':          CompanyTypes.max,
@@ -39,18 +37,23 @@ const PROVIDER_MAP = {
   'amex':         CompanyTypes.amex,
 };
 
-// פונקציה לסריקת בנק/כרטיס
+// Chrome executable path (system Chromium in Docker, or bundled Puppeteer)
+const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
+
 async function scrapeProvider(providerType, credentials) {
   const scraper = createScraper({
     companyId: providerType,
-    startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000), // 90 יום אחורה
+    startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
     combineInstallments: false,
     showBrowser: false,
+    executablePath: CHROME_PATH,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu',
+      '--single-process',
+      '--no-zygote',
     ],
   });
 
@@ -63,13 +66,23 @@ async function scrapeProvider(providerType, credentials) {
   return result.accounts;
 }
 
-// פונקציה לשמירת עסקאות ב-Supabase
+// Verify Supabase auth token and return user
+async function verifyAuthToken(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return null;
+  }
+  const token = authHeader.split(' ')[1];
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  if (error || !user) return null;
+  return user;
+}
+
 async function saveTransactionsToSupabase(userId, accounts, providerName) {
   let totalSaved = 0;
   let totalSkipped = 0;
 
   for (const account of accounts) {
-    // 1. מצא או צור חשבון ב-Supabase
     const { data: existingAccount } = await supabase
       .from('accounts')
       .select('id')
@@ -81,7 +94,6 @@ async function saveTransactionsToSupabase(userId, accounts, providerName) {
 
     if (existingAccount) {
       accountId = existingAccount.id;
-      // עדכן יתרה
       await supabase
         .from('accounts')
         .update({
@@ -90,7 +102,6 @@ async function saveTransactionsToSupabase(userId, accounts, providerName) {
         })
         .eq('id', accountId);
     } else {
-      // צור חשבון חדש
       const { data: newAccount } = await supabase
         .from('accounts')
         .insert({
@@ -110,9 +121,7 @@ async function saveTransactionsToSupabase(userId, accounts, providerName) {
 
     if (!accountId) continue;
 
-    // 2. שמור עסקאות
     for (const txn of (account.txns || [])) {
-      // בדוק אם העסקה כבר קיימת (לפי תאריך + סכום + תיאור)
       const { data: existing } = await supabase
         .from('transactions')
         .select('id')
@@ -128,9 +137,7 @@ async function saveTransactionsToSupabase(userId, accounts, providerName) {
         continue;
       }
 
-      // קטגוריזציה אוטומטית בסיסית
       const category = autoCategorizeTxn(txn.description);
-
       const amount = Math.abs(txn.chargedAmount || txn.originalAmount);
       const type = (txn.chargedAmount || txn.originalAmount) < 0 ? 'expense' : 'income';
 
@@ -157,10 +164,8 @@ async function saveTransactionsToSupabase(userId, accounts, providerName) {
   return { totalSaved, totalSkipped };
 }
 
-// קטגוריזציה אוטומטית בסיסית לפי מילות מפתח
 function autoCategorizeTxn(description = '') {
   const desc = description.toLowerCase();
-  
   const rules = [
     { keywords: ['סופר', 'מרקט', 'רמי לוי', 'שופרסל', 'יינות ביתן', 'מחסני השוק', 'victory'], category: 1 },
     { keywords: ['דלק', 'פז', 'סונול', 'דור אלון', 'תן', 'גז'], category: 2 },
@@ -173,59 +178,52 @@ function autoCategorizeTxn(description = '') {
     { keywords: ['סינמה', 'קולנוע', 'אמזון', 'netflix', 'spotify', 'apple'], category: 9 },
     { keywords: ['משכורת', 'שכר', 'salary', 'הכנסה'], category: 10 },
   ];
-
   for (const rule of rules) {
-    if (rule.keywords.some(kw => desc.includes(kw))) {
-      return rule.category;
-    }
+    if (rule.keywords.some(kw => desc.includes(kw))) return rule.category;
   }
-
-  return null; // ללא קטגוריה - המשתמש יקטגר ידנית
+  return null;
 }
 
 // ==================
 // API ENDPOINTS
 // ==================
 
-// בדיקת תקינות
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'FinFamily Bank Scraper Server', timestamp: new Date() });
 });
 
-// קבלת רשימת ספקים נתמכים
 app.get('/providers', (req, res) => {
   res.json({
     banks: [
-      { id: 'hapoalim',     name: 'בנק הפועלים',      logo: '🏦', type: 'bank' },
-      { id: 'leumi',        name: 'בנק לאומי',         logo: '🏦', type: 'bank' },
-      { id: 'discount',     name: 'בנק דיסקונט',       logo: '🏦', type: 'bank' },
-      { id: 'mizrahi',      name: 'מזרחי טפחות',       logo: '🏦', type: 'bank' },
-      { id: 'otsarHahayal', name: 'אוצר החייל',        logo: '🏦', type: 'bank' },
-      { id: 'beinleumi',    name: 'הבינלאומי',         logo: '🏦', type: 'bank' },
-      { id: 'union',        name: 'יובנק',             logo: '🏦', type: 'bank' },
+      { id: 'hapoalim', name: 'בנק הפועלים', logo: '🏦', type: 'bank' },
+      { id: 'leumi', name: 'בנק לאומי', logo: '🏦', type: 'bank' },
+      { id: 'discount', name: 'בנק דיסקונט', logo: '🏦', type: 'bank' },
+      { id: 'mizrahi', name: 'מזרחי טפחות', logo: '🏦', type: 'bank' },
+      { id: 'beinleumi', name: 'הבינלאומי', logo: '🏦', type: 'bank' },
     ],
     creditCards: [
-      { id: 'isracard',     name: 'ישראכרט',          logo: '💳', type: 'credit' },
-      { id: 'cal',          name: 'כאל',              logo: '💳', type: 'credit' },
-      { id: 'max',          name: 'מקס (לאומי קארד)', logo: '💳', type: 'credit' },
-      { id: 'visaCal',      name: 'ויזה כאל',         logo: '💳', type: 'credit' },
-      { id: 'diners',       name: 'דיינרס',           logo: '💳', type: 'credit' },
-      { id: 'amex',         name: 'אמריקן אקספרס',    logo: '💳', type: 'credit' },
+      { id: 'isracard', name: 'ישראכרט', logo: '💳', type: 'credit' },
+      { id: 'cal', name: 'כאל', logo: '💳', type: 'credit' },
+      { id: 'max', name: 'מקס (לאומי קארד)', logo: '💳', type: 'credit' },
+      { id: 'visaCal', name: 'ויזה כאל', logo: '💳', type: 'credit' },
+      { id: 'amex', name: 'אמריקן אקספרס', logo: '💳', type: 'credit' },
     ]
   });
 });
 
-// סריקה ידנית - מה שהמשתמש לוחץ "סנכרן"
+// Manual scrape - authenticated via Supabase token
 app.post('/scrape', async (req, res) => {
-  const { userId, provider, credentials, apiKey } = req.body;
-
-  // אימות API key
-  if (apiKey !== process.env.API_SECRET_KEY) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  // Verify user via Supabase auth token
+  const user = await verifyAuthToken(req);
+  if (!user) {
+    return res.status(401).json({ error: 'אימות נכשל - נא להתחבר מחדש' });
   }
 
-  if (!userId || !provider || !credentials) {
-    return res.status(400).json({ error: 'חסרים פרטים: userId, provider, credentials' });
+  const { provider, credentials } = req.body;
+  const userId = user.id;
+
+  if (!provider || !credentials) {
+    return res.status(400).json({ error: 'חסרים פרטים: provider, credentials' });
   }
 
   const providerType = PROVIDER_MAP[provider];
@@ -235,44 +233,20 @@ app.post('/scrape', async (req, res) => {
 
   try {
     console.log(`[${new Date().toISOString()}] Scraping ${provider} for user ${userId}...`);
-
     const accounts = await scrapeProvider(providerType, credentials);
     const { totalSaved, totalSkipped } = await saveTransactionsToSupabase(userId, accounts, provider);
-
-    // עדכן סטטוס סנכרון
-    await supabase
-      .from('bank_connections')
-      .upsert({
-        user_id: userId,
-        provider: provider,
-        last_sync: new Date().toISOString(),
-        status: 'success',
-        accounts_count: accounts.length
-      }, { onConflict: 'user_id,provider' });
 
     console.log(`[${new Date().toISOString()}] Done! Saved: ${totalSaved}, Skipped: ${totalSkipped}`);
 
     res.json({
       success: true,
-      message: `סנכרון הושלם בהצלחה`,
-      totalSaved,
+      message: 'סנכרון הושלם בהצלחה',
+      transactionsAdded: totalSaved,
       totalSkipped,
       accountsCount: accounts.length
     });
-
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error scraping ${provider}:`, error.message);
-
-    await supabase
-      .from('bank_connections')
-      .upsert({
-        user_id: userId,
-        provider: provider,
-        last_sync: new Date().toISOString(),
-        status: 'error',
-        error_message: error.message
-      }, { onConflict: 'user_id,provider' });
-
     res.status(500).json({
       success: false,
       error: error.message || 'שגיאה בסנכרון'
@@ -280,7 +254,7 @@ app.post('/scrape', async (req, res) => {
   }
 });
 
-// סנכרון אוטומטי לכל המשתמשים (לא חשוף לציבור)
+// Admin sync-all (protected by admin key)
 app.post('/sync-all', async (req, res) => {
   const { adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) {
@@ -291,7 +265,6 @@ app.post('/sync-all', async (req, res) => {
     const { data: connections } = await supabase
       .from('bank_connections')
       .select('*')
-      .eq('status', 'active')
       .eq('auto_sync', true);
 
     const results = [];
@@ -317,7 +290,7 @@ app.post('/sync-all', async (req, res) => {
   }
 });
 
-// סנכרון אוטומטי כל לילה ב-02:00
+// Nightly auto-sync at 02:00 Jerusalem time
 cron.schedule('0 2 * * *', async () => {
   console.log('[CRON] Starting nightly auto-sync...');
   try {
@@ -350,5 +323,6 @@ cron.schedule('0 2 * * *', async () => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`🏦 FinFamily Bank Scraper running on port ${PORT}`);
+  console.log(`🐋 Chrome path: ${CHROME_PATH || 'bundled'}`);
   console.log(`📅 Auto-sync scheduled: every night at 02:00 Jerusalem time`);
 });
