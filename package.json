@@ -6,7 +6,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "postinstall": "mkdir -p node_modules/.bin && printf \"#\\!/bin/sh\\nexit 0\\n\" > node_modules/.bin/puppeteer && chmod +x node_modules/.bin/puppeteer"
   },
   "dependencies": {
     "israeli-bank-scrapers": "^4.2.0",
