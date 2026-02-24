@@ -4,6 +4,7 @@ const cors = require('cors');
 const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 const { CompanyTypes, createScraper } = require('israeli-bank-scrapers');
+const chromium = require('@sparticuz/chromium');
 
 const app = express();
 app.use(express.json());
@@ -37,23 +38,19 @@ const PROVIDER_MAP = {
   'amex':         CompanyTypes.amex,
 };
 
-// Chrome executable path (system Chromium in Docker, or bundled Puppeteer)
-const CHROME_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
-
 async function scrapeProvider(providerType, credentials) {
+  // Use system Chrome, env override, or @sparticuz/chromium as fallback
+  const execPath = process.env.PUPPETEER_EXECUTABLE_PATH || await chromium.executablePath();
+
   const scraper = createScraper({
     companyId: providerType,
     startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
     combineInstallments: false,
     showBrowser: false,
-    executablePath: CHROME_PATH,
+    executablePath: execPath,
     args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
+      ...chromium.args,
       '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--single-process',
-      '--no-zygote',
     ],
   });
 
@@ -213,7 +210,6 @@ app.get('/providers', (req, res) => {
 
 // Manual scrape - authenticated via Supabase token
 app.post('/scrape', async (req, res) => {
-  // Verify user via Supabase auth token
   const user = await verifyAuthToken(req);
   if (!user) {
     return res.status(401).json({ error: 'אימות נכשל - נא להתחבר מחדש' });
@@ -322,7 +318,6 @@ cron.schedule('0 2 * * *', async () => {
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`🏦 FinFamily Bank Scraper running on port ${PORT}`);
-  console.log(`🐋 Chrome path: ${CHROME_PATH || 'bundled'}`);
-  console.log(`📅 Auto-sync scheduled: every night at 02:00 Jerusalem time`);
+  console.log(`FinFamily Bank Scraper running on port ${PORT}`);
+  console.log(`Auto-sync scheduled: every night at 02:00 Jerusalem time`);
 });
