@@ -8,7 +8,7 @@ const { CompanyTypes, createScraper } = require('israeli-bank-scrapers');
 const app = express();
 app.use(express.json());
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: true,
   methods: ['GET', 'POST'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
@@ -35,18 +35,21 @@ const PROVIDER_MAP = {
   'amex':         CompanyTypes.amex,
 };
 
-// Chrome binary - try @sparticuz/chromium, then env var, then none
+// Chrome binary - try @sparticuz/chromium first
 let chromium = null;
 try { chromium = require('@sparticuz/chromium'); } catch (e) {}
 
 async function getChromePath() {
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
   if (chromium) return await chromium.executablePath();
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
   return undefined;
 }
 
 async function scrapeProvider(providerType, credentials) {
   const execPath = await getChromePath();
+  if (!execPath) {
+    throw new Error('No Chrome binary available. Server needs @sparticuz/chromium or PUPPETEER_EXECUTABLE_PATH.');
+  }
   const defaultArgs = chromium ? chromium.args : [
     '--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu',
     '--single-process', '--no-zygote'
@@ -247,5 +250,5 @@ cron.schedule('0 2 * * *', async () => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log('FinFamily Bank Scraper running on port ' + PORT);
-  console.log('Chrome: ' + (chromium ? 'sparticuz/chromium' : (process.env.PUPPETEER_EXECUTABLE_PATH || 'none')));
+  console.log('Chrome: ' + (chromium ? '@sparticuz/chromium' : (process.env.PUPPETEER_EXECUTABLE_PATH || 'none')));
 });
