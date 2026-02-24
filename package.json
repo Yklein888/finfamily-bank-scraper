@@ -18,6 +18,9 @@
     "puppeteer": "^21.6.1",
     "@sparticuz/chromium": "^131.0.1"
   },
+  "overrides": {
+    "puppeteer": "npm:puppeteer-core@^21.6.1"
+  },
   "engines": {
     "node": ">=18"
   }
