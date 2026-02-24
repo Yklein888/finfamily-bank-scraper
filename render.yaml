@@ -4,11 +4,13 @@ services:
     env: node
     region: frankfurt
     plan: free
-    buildCommand: npm install && npx puppeteer browsers install chrome
+    buildCommand: npm install
     startCommand: node server.js
     envVars:
       - key: NODE_ENV
         value: production
       - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
-        value: false
+        value: "true"
+      - key: PUPPETEER_SKIP_DOWNLOAD
+        value: "true"
     healthCheckPath: /health
