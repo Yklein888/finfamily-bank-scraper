@@ -26,6 +26,8 @@ const PROVIDER_MAP = {
   'otsarHahayal': CompanyTypes.otsarHahayal,
   'union':        CompanyTypes.unionBank,
   'beinleumi':    CompanyTypes.beinleumi,
+    'fibi':         CompanyTypes.fibi,
+    'yahav':        CompanyTypes.yahav,
   'massad':       CompanyTypes.massad,
   'isracard':     CompanyTypes.isracard,
   'cal':          CompanyTypes.cal,
