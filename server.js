@@ -1,10 +1,12 @@
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const cron = require('node-cron');
-const { createClient } = require('@supabase/supabase-js');
-const { CompanyTypes, createScraper } = require('israeli-bank-scrapers');
-const { scrapeMyFinanda } = require('./myfinanda-scraper');
+import dotenv from 'dotenv';
+import express from 'express';
+import cors from 'cors';
+import cron from 'node-cron';
+import { createClient } from '@supabase/supabase-js';
+import { CompanyTypes, createScraper } from 'israeli-bank-scrapers';
+import { scrapeMyFinanda } from './myfinanda-scraper.js';
+
+dotenv.config();
 
 const app = express();
 app.use(express.json());

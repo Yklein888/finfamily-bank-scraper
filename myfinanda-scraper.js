@@ -4,10 +4,12 @@
  * Saves to Supabase database
  */
 
-const puppeteer = require('puppeteer-core');
-const chromium = require('@sparticuz/chromium');
-const { createClient } = require('@supabase/supabase-js');
-require('dotenv').config();
+import puppeteer from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
+import { createClient } from '@supabase/supabase-js';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -268,4 +270,4 @@ async function scrapeMyFinanda(userId) {
   }
 }
 
-module.exports = { scrapeMyFinanda };
+export { scrapeMyFinanda };
