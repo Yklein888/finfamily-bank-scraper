@@ -80,24 +80,43 @@ async function scrapeProvider(providerType, credentials, attempt = 1) {
     '--no-first-run',
     '--no-default-browser-check',
     '--metrics-recording-only',
+    '--disable-plugins',
+    '--disable-images',  // Don't load images - faster
     'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   ];
 
+  // Use a persistent user data directory for cookies
+  const userDataDir = `/tmp/puppeteer-${providerType}-${Date.now() % 1000}`;
+  const userDataArgs = [`--user-data-dir=${userDataDir}`];
+
   try {
+    console.log('[Scraper] Starting with settings: headless=false, showBrowser=true, timeout=180s');
+
+    // Try with headless: false (showBrowser: true) to avoid detection
+    // Some banks (like Hapoalim) detect Puppeteer in headless mode
     const scraper = createScraper({
       companyId: providerType,
       startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
       combineInstallments: false,
-      showBrowser: false,
+      showBrowser: true,  // CHANGED: Try with browser visible
       executablePath: execPath,
-      args: [...defaultArgs, '--disable-dev-shm-usage', ...stealthArgs],
-      timeout: 150000, // 2.5 minutes timeout
+      args: [
+        ...defaultArgs,
+        '--disable-dev-shm-usage',
+        ...stealthArgs,
+        ...userDataArgs,  // Persistent user data dir
+        '--start-maximized',  // Maximize window
+      ],
+      timeout: 180000, // Increased to 3 minutes
+      headless: false,  // Explicitly disable headless mode
     });
 
     const result = await scraper.scrape(credentials);
     if (!result.success) {
+      console.error('[Scraper] Error:', result.errorMessage);
       throw new Error(result.errorMessage || 'Scraping failed');
     }
+    console.log('[Scraper] Success! Found ' + result.accounts.length + ' accounts');
     return result.accounts;
   } catch (error) {
     // Retry with exponential backoff
