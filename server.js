@@ -4,6 +4,7 @@ const cors = require('cors');
 const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 const { CompanyTypes, createScraper } = require('israeli-bank-scrapers');
+const { scrapeMyFinanda } = require('./myfinanda-scraper');
 
 const app = express();
 app.use(express.json());
@@ -313,6 +314,36 @@ app.post('/scrape', async (req, res) => {
     await logSyncAttempt(user.id, provider, 'failed', error.message, 0);
     console.error('[' + new Date().toISOString() + '] Error after ' + duration + 'ms:', error.message);
     res.status(500).json({ success: false, error: error.message || 'Scraping error', duration });
+  }
+});
+
+// MyFinanda Integration Endpoint
+app.post('/myfinanda', async (req, res) => {
+  const user = await verifyAuthToken(req);
+  if (!user) return res.status(401).json({ error: 'Authentication failed' });
+
+  const startTime = Date.now();
+  try {
+    console.log('[MyFinanda] Starting sync for user ' + user.id);
+    const result = await scrapeMyFinanda(user.id);
+
+    const duration = Date.now() - startTime;
+    console.log('[MyFinanda] Sync completed in ' + duration + 'ms');
+
+    res.json({
+      success: true,
+      message: 'MyFinanda sync complete',
+      ...result,
+      duration
+    });
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    console.error('[MyFinanda] Error after ' + duration + 'ms:', error.message);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'MyFinanda sync failed',
+      duration
+    });
   }
 });
 
