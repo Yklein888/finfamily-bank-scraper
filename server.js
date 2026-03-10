@@ -18,7 +18,7 @@ app.use(cors({
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
 const PROVIDER_MAP = {
@@ -42,7 +42,13 @@ const PROVIDER_MAP = {
 
 // Chrome binary - try @sparticuz/chromium first
 let chromium = null;
-try { chromium = require('@sparticuz/chromium'); } catch (e) {}
+(async () => {
+  try {
+    chromium = (await import('@sparticuz/chromium')).default;
+  } catch (e) {
+    console.log('[Init] @sparticuz/chromium not available, will use PUPPETEER_EXECUTABLE_PATH or system Chrome');
+  }
+})();
 
 async function getChromePath() {
   if (chromium) return await chromium.executablePath();
