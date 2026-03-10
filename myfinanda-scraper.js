@@ -219,9 +219,6 @@ function parseDate(dateStr) {
 
 async function scrapeMyFinanda(userId) {
   const execPath = await getChromePath();
-  if (!execPath) {
-    throw new Error('No Chrome binary available.');
-  }
 
   const defaultArgs = [
     '--no-sandbox',
@@ -233,10 +230,10 @@ async function scrapeMyFinanda(userId) {
 
   let browser;
   try {
-    console.log('[MyFinanda] Starting browser...');
+    console.log('[MyFinanda] Starting browser with execPath: ' + (execPath || 'auto-detect'));
     browser = await puppeteer.launch({
       args: [...defaultArgs, '--disable-dev-shm-usage'],
-      executablePath: execPath,
+      executablePath: execPath || undefined,
       headless: true,
     });
 
