@@ -85,10 +85,11 @@ async function saveTransactionsToSupabase(userId, accounts, providerName) {
   let totalSkipped = 0;
 
   for (const account of accounts) {
+    const accountNumber = account.accountNumber || providerName;
     const { data: existingAccount } = await supabase
       .from('accounts').select('id')
       .eq('user_id', userId)
-      .eq('account_number', account.accountNumber || providerName)
+      .eq('account_number', accountNumber)
       .single();
 
     let accountId;
@@ -96,45 +97,55 @@ async function saveTransactionsToSupabase(userId, accounts, providerName) {
       accountId = existingAccount.id;
       await supabase.from('accounts').update({
         balance: account.balance || 0,
-        last_sync: new Date().toISOString()
+        last_sync: new Date().toISOString(),
+        is_synced: true,
       }).eq('id', accountId);
     } else {
-      const { data: newAccount } = await supabase.from('accounts').insert({
+      const { data: newAccount, error: insertErr } = await supabase.from('accounts').insert({
         user_id: userId,
-        name: providerName + ' - ' + (account.accountNumber || 'main'),
-        account_number: account.accountNumber || providerName,
+        name: providerName + ' - ' + accountNumber,
+        bank_name: providerName,
+        account_number: accountNumber,
         balance: account.balance || 0,
         currency: 'ILS',
         account_type: 'checking',
-        last_sync: new Date().toISOString()
+        last_sync: new Date().toISOString(),
+        is_synced: true,
       }).select('id').single();
+      if (insertErr) { console.error('Account insert error:', insertErr.message); continue; }
       accountId = newAccount ? newAccount.id : null;
     }
     if (!accountId) continue;
 
     for (const txn of (account.txns || [])) {
+      const txnDate = new Date(txn.date).toISOString().split('T')[0];
+      const amount = Math.abs(txn.chargedAmount || txn.originalAmount || 0);
+      const type = (txn.chargedAmount || txn.originalAmount || 0) < 0 ? 'expense' : 'income';
+
+      // Dedup check using correct column name
       const { data: existing } = await supabase
         .from('transactions').select('id')
         .eq('user_id', userId).eq('account_id', accountId)
-        .eq('amount', Math.abs(txn.chargedAmount || txn.originalAmount))
-        .eq('date', new Date(txn.date).toISOString().split('T')[0])
-        .eq('description', txn.description).single();
+        .eq('amount', amount)
+        .eq('transaction_date', txnDate)
+        .eq('description', txn.description || '')
+        .single();
       if (existing) { totalSkipped++; continue; }
 
-      const category = autoCategorizeTxn(txn.description);
-      const amount = Math.abs(txn.chargedAmount || txn.originalAmount);
-      const type = (txn.chargedAmount || txn.originalAmount) < 0 ? 'expense' : 'income';
-
-      await supabase.from('transactions').insert({
-        user_id: userId, account_id: accountId, amount, type,
+      const { error: txnErr } = await supabase.from('transactions').insert({
+        user_id: userId,
+        account_id: accountId,
+        amount,
+        type,
         description: txn.description || 'transaction',
-        date: new Date(txn.date).toISOString().split('T')[0],
-        status: txn.status || 'completed',
-        category_id: category, source: 'bank_sync',
-        original_currency: txn.originalCurrency || 'ILS',
-        memo: txn.memo || null,
+        transaction_date: txnDate,
+        notes: txn.memo || null,
       });
-      totalSaved++;
+      if (txnErr) {
+        console.error('Transaction insert error:', txnErr.message);
+      } else {
+        totalSaved++;
+      }
     }
   }
   return { totalSaved, totalSkipped };
@@ -196,6 +207,17 @@ app.post('/scrape', async (req, res) => {
     console.log('[' + new Date().toISOString() + '] Scraping ' + provider + ' for user ' + user.id);
     const accounts = await scrapeProvider(providerType, credentials);
     const { totalSaved, totalSkipped } = await saveTransactionsToSupabase(user.id, accounts, provider);
+
+    // Upsert open_banking_connections so UI shows the bank as active
+    await supabase.from('open_banking_connections').upsert({
+      user_id: user.id,
+      provider_name: provider,
+      provider_code: provider,
+      connection_status: 'active',
+      last_sync: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,provider_code' });
+
     console.log('[' + new Date().toISOString() + '] Done! Saved: ' + totalSaved + ', Skipped: ' + totalSkipped);
     res.json({ success: true, message: 'Sync complete', transactionsAdded: totalSaved, totalSkipped, accountsCount: accounts.length });
   } catch (error) {
