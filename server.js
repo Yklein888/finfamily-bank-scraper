@@ -235,18 +235,29 @@ app.get('/providers', (req, res) => {
   });
 });
 
-async function logSyncAttempt(userId, provider, status, message, accountsCount = null) {
+async function logSyncAttempt(userId, provider, status, errorMessage = null, transactionsAdded = 0) {
   try {
+    // Find the connection to link the sync history
+    const { data: connection } = await supabase
+      .from('open_banking_connections')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('provider_code', provider)
+      .single();
+
     await supabase.from('sync_history').insert({
       user_id: userId,
-      provider_name: provider,
-      sync_status: status,
-      error_message: message,
-      accounts_synced: accountsCount,
-      synced_at: new Date().toISOString(),
+      connection_id: connection?.id || null,
+      sync_type: 'manual', // or 'automatic' for cron jobs
+      sync_status: status === 'success' ? 'success' : 'failed',
+      transactions_added: transactionsAdded || 0,
+      error_message: errorMessage,
+      sync_start: new Date().toISOString(),
+      sync_end: new Date().toISOString(),
     });
   } catch (err) {
-    console.error('Failed to log sync history:', err.message);
+    // Silently fail - don't break the sync if logging fails
+    console.error('[Log] Failed to record sync history:', err.message);
   }
 }
 
@@ -275,12 +286,12 @@ app.post('/scrape', async (req, res) => {
     }, { onConflict: 'user_id,provider_code' });
 
     const duration = Date.now() - startTime;
-    await logSyncAttempt(user.id, provider, 'success', null, accounts.length);
+    await logSyncAttempt(user.id, provider, 'success', null, totalSaved);
     console.log('[' + new Date().toISOString() + '] Done! Saved: ' + totalSaved + ', Skipped: ' + totalSkipped + ', Duration: ' + duration + 'ms');
     res.json({ success: true, message: 'Sync complete', transactionsAdded: totalSaved, totalSkipped, accountsCount: accounts.length, duration });
   } catch (error) {
     const duration = Date.now() - startTime;
-    await logSyncAttempt(user.id, provider, 'failed', error.message);
+    await logSyncAttempt(user.id, provider, 'failed', error.message, 0);
     console.error('[' + new Date().toISOString() + '] Error after ' + duration + 'ms:', error.message);
     res.status(500).json({ success: false, error: error.message || 'Scraping error', duration });
   }
@@ -321,12 +332,12 @@ app.post('/sync-all', async (req, res) => {
         }, { onConflict: 'user_id,provider_code' });
 
         const duration = Date.now() - connStartTime;
-        await logSyncAttempt(conn.user_id, conn.provider, 'success', null, accounts.length);
+        await logSyncAttempt(conn.user_id, conn.provider, 'success', null, stats.totalSaved);
         results.push({ provider: conn.provider, userId: conn.user_id, ...stats, success: true, duration });
         console.log('[SYNC-ALL] ✓ ' + conn.provider + ' synced (' + duration + 'ms)');
       } catch (err) {
         const duration = Date.now() - connStartTime;
-        await logSyncAttempt(conn.user_id, conn.provider, 'failed', err.message);
+        await logSyncAttempt(conn.user_id, conn.provider, 'failed', err.message, 0);
         results.push({ provider: conn.provider, userId: conn.user_id, success: false, error: err.message, duration });
         console.error('[SYNC-ALL] ✗ ' + conn.provider + ' failed (' + duration + 'ms):', err.message);
       }
@@ -374,12 +385,12 @@ cron.schedule('0 2 * * *', async () => {
         }, { onConflict: 'user_id,provider_code' });
 
         const duration = Date.now() - connStartTime;
-        await logSyncAttempt(conn.user_id, conn.provider, 'success', null, accounts.length);
+        await logSyncAttempt(conn.user_id, conn.provider, 'success', null, totalSaved);
         console.log('[CRON] ✓ ' + conn.provider + ' synced (' + totalSaved + ' transactions, ' + duration + 'ms)');
         totalSucceeded++;
       } catch (err) {
         const duration = Date.now() - connStartTime;
-        await logSyncAttempt(conn.user_id, conn.provider, 'failed', err.message);
+        await logSyncAttempt(conn.user_id, conn.provider, 'failed', err.message, 0);
         console.error('[CRON] ✗ ' + conn.provider + ' failed (' + duration + 'ms):', err.message);
         totalFailed++;
       }
