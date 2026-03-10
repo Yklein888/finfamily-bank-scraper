@@ -5,11 +5,20 @@
  */
 
 import puppeteer from 'puppeteer-core';
-import chromium from '@sparticuz/chromium';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+// Load chromium async
+let chromium = null;
+(async () => {
+  try {
+    chromium = (await import('@sparticuz/chromium')).default;
+  } catch (e) {
+    console.log('[MyFinanda] @sparticuz/chromium not available');
+  }
+})();
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
