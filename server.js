@@ -57,13 +57,30 @@ async function scrapeProvider(providerType, credentials) {
     '--single-process', '--no-zygote'
   ];
 
+  // Anti-detection arguments for banks that block Puppeteer
+  const stealthArgs = [
+    '--disable-blink-features=AutomationControlled',
+    '--disable-web-resources',
+    '--disable-default-apps',
+    '--disable-preconnect',
+    '--disable-background-networking',
+    '--disable-sync',
+    '--disable-plugins-power-saver',
+    '--disable-breakpad',
+    '--disable-default-apps',
+    '--disable-extensions',
+    '--disable-features=VizDisplayCompositor',
+    'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+  ];
+
   const scraper = createScraper({
     companyId: providerType,
     startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
     combineInstallments: false,
     showBrowser: false,
     executablePath: execPath,
-    args: [...defaultArgs, '--disable-dev-shm-usage'],
+    args: [...defaultArgs, '--disable-dev-shm-usage', ...stealthArgs],
+    timeout: 120000, // 2 minutes timeout instead of default ~30s
   });
 
   const result = await scraper.scrape(credentials);
