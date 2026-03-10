@@ -10,15 +10,8 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Load chromium async
+// Chromium is loaded in server.js, we'll use getChromePath() which handles fallbacks
 let chromium = null;
-(async () => {
-  try {
-    chromium = (await import('@sparticuz/chromium')).default;
-  } catch (e) {
-    console.log('[MyFinanda] @sparticuz/chromium not available');
-  }
-})();
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -30,8 +23,11 @@ const MYFINANDA_EMAIL = process.env.MYFINANDA_EMAIL;
 const MYFINANDA_PASSWORD = process.env.MYFINANDA_PASSWORD;
 
 async function getChromePath() {
-  if (chromium) return await chromium.executablePath();
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
+  // Try environment variable first
+  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+    return process.env.PUPPETEER_EXECUTABLE_PATH;
+  }
+  // Otherwise use system Chrome (Puppeteer will find it)
   return undefined;
 }
 
@@ -227,7 +223,7 @@ async function scrapeMyFinanda(userId) {
     throw new Error('No Chrome binary available.');
   }
 
-  const defaultArgs = chromium ? chromium.args : [
+  const defaultArgs = [
     '--no-sandbox',
     '--disable-setuid-sandbox',
     '--disable-gpu',
