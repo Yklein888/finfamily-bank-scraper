@@ -47,7 +47,8 @@ async function getChromePath() {
   return undefined;
 }
 
-async function scrapeProvider(providerType, credentials) {
+async function scrapeProvider(providerType, credentials, attempt = 1) {
+  const maxAttempts = 3;
   const execPath = await getChromePath();
   if (!execPath) {
     throw new Error('No Chrome binary available. Server needs @sparticuz/chromium or PUPPETEER_EXECUTABLE_PATH.');
@@ -57,7 +58,7 @@ async function scrapeProvider(providerType, credentials) {
     '--single-process', '--no-zygote'
   ];
 
-  // Anti-detection arguments for banks that block Puppeteer
+  // Comprehensive anti-detection arguments for Israeli banks (especially Hapoalim)
   const stealthArgs = [
     '--disable-blink-features=AutomationControlled',
     '--disable-web-resources',
@@ -67,25 +68,47 @@ async function scrapeProvider(providerType, credentials) {
     '--disable-sync',
     '--disable-plugins-power-saver',
     '--disable-breakpad',
-    '--disable-default-apps',
     '--disable-extensions',
     '--disable-features=VizDisplayCompositor',
-    'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    '--disable-component-extensions-with-background-pages',
+    '--disable-default-apps',
+    '--disable-hang-monitor',
+    '--disable-notifications',
+    '--disable-popup-blocking',
+    '--disable-prompt-on-repost',
+    '--disable-reading-from-canvas',
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--metrics-recording-only',
+    'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   ];
 
-  const scraper = createScraper({
-    companyId: providerType,
-    startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
-    combineInstallments: false,
-    showBrowser: false,
-    executablePath: execPath,
-    args: [...defaultArgs, '--disable-dev-shm-usage', ...stealthArgs],
-    timeout: 120000, // 2 minutes timeout instead of default ~30s
-  });
+  try {
+    const scraper = createScraper({
+      companyId: providerType,
+      startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
+      combineInstallments: false,
+      showBrowser: false,
+      executablePath: execPath,
+      args: [...defaultArgs, '--disable-dev-shm-usage', ...stealthArgs],
+      timeout: 150000, // 2.5 minutes timeout
+    });
 
-  const result = await scraper.scrape(credentials);
-  if (!result.success) throw new Error(result.errorMessage || 'Scraping failed');
-  return result.accounts;
+    const result = await scraper.scrape(credentials);
+    if (!result.success) {
+      throw new Error(result.errorMessage || 'Scraping failed');
+    }
+    return result.accounts;
+  } catch (error) {
+    // Retry with exponential backoff
+    if (attempt < maxAttempts) {
+      const delayMs = Math.min(1000 * Math.pow(2, attempt - 1), 10000); // 1s, 2s, 4s...
+      console.log(`[Retry] Attempt ${attempt}/${maxAttempts} failed. Retrying in ${delayMs}ms for provider ${providerType}`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+      return scrapeProvider(providerType, credentials, attempt + 1);
+    }
+    throw error;
+  }
 }
 
 async function verifyAuthToken(req) {
@@ -212,6 +235,21 @@ app.get('/providers', (req, res) => {
   });
 });
 
+async function logSyncAttempt(userId, provider, status, message, accountsCount = null) {
+  try {
+    await supabase.from('sync_history').insert({
+      user_id: userId,
+      provider_name: provider,
+      sync_status: status,
+      error_message: message,
+      accounts_synced: accountsCount,
+      synced_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Failed to log sync history:', err.message);
+  }
+}
+
 app.post('/scrape', async (req, res) => {
   const user = await verifyAuthToken(req);
   if (!user) return res.status(401).json({ error: 'Authentication failed' });
@@ -220,6 +258,7 @@ app.post('/scrape', async (req, res) => {
   const providerType = PROVIDER_MAP[provider];
   if (!providerType) return res.status(400).json({ error: 'Unsupported provider: ' + provider });
 
+  const startTime = Date.now();
   try {
     console.log('[' + new Date().toISOString() + '] Scraping ' + provider + ' for user ' + user.id);
     const accounts = await scrapeProvider(providerType, credentials);
@@ -235,56 +274,122 @@ app.post('/scrape', async (req, res) => {
       updated_at: new Date().toISOString(),
     }, { onConflict: 'user_id,provider_code' });
 
-    console.log('[' + new Date().toISOString() + '] Done! Saved: ' + totalSaved + ', Skipped: ' + totalSkipped);
-    res.json({ success: true, message: 'Sync complete', transactionsAdded: totalSaved, totalSkipped, accountsCount: accounts.length });
+    const duration = Date.now() - startTime;
+    await logSyncAttempt(user.id, provider, 'success', null, accounts.length);
+    console.log('[' + new Date().toISOString() + '] Done! Saved: ' + totalSaved + ', Skipped: ' + totalSkipped + ', Duration: ' + duration + 'ms');
+    res.json({ success: true, message: 'Sync complete', transactionsAdded: totalSaved, totalSkipped, accountsCount: accounts.length, duration });
   } catch (error) {
-    console.error('[' + new Date().toISOString() + '] Error:', error.message);
-    res.status(500).json({ success: false, error: error.message || 'Scraping error' });
+    const duration = Date.now() - startTime;
+    await logSyncAttempt(user.id, provider, 'failed', error.message);
+    console.error('[' + new Date().toISOString() + '] Error after ' + duration + 'ms:', error.message);
+    res.status(500).json({ success: false, error: error.message || 'Scraping error', duration });
   }
 });
 
 app.post('/sync-all', async (req, res) => {
   const { adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.status(401).json({ error: 'Unauthorized' });
+
+  const startTime = Date.now();
   try {
     const { data: connections } = await supabase.from('bank_connections').select('*').eq('auto_sync', true);
     const results = [];
+
+    console.log('[SYNC-ALL] Starting sync for ' + (connections?.length || 0) + ' connections');
+
     for (const conn of (connections || [])) {
+      const connStartTime = Date.now();
       try {
         const creds = JSON.parse(Buffer.from(conn.encrypted_credentials, 'base64').toString());
         const pt = PROVIDER_MAP[conn.provider];
-        if (!pt) continue;
+        if (!pt) {
+          results.push({ provider: conn.provider, userId: conn.user_id, success: false, error: 'Unsupported provider' });
+          continue;
+        }
+
         const accounts = await scrapeProvider(pt, creds);
         const stats = await saveTransactionsToSupabase(conn.user_id, accounts, conn.provider);
-        results.push({ provider: conn.provider, userId: conn.user_id, ...stats, success: true });
+
+        // Update connection status
+        await supabase.from('open_banking_connections').upsert({
+          user_id: conn.user_id,
+          provider_name: conn.provider,
+          provider_code: conn.provider,
+          connection_status: 'active',
+          last_sync: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,provider_code' });
+
+        const duration = Date.now() - connStartTime;
+        await logSyncAttempt(conn.user_id, conn.provider, 'success', null, accounts.length);
+        results.push({ provider: conn.provider, userId: conn.user_id, ...stats, success: true, duration });
+        console.log('[SYNC-ALL] ✓ ' + conn.provider + ' synced (' + duration + 'ms)');
       } catch (err) {
-        results.push({ provider: conn.provider, userId: conn.user_id, success: false, error: err.message });
+        const duration = Date.now() - connStartTime;
+        await logSyncAttempt(conn.user_id, conn.provider, 'failed', err.message);
+        results.push({ provider: conn.provider, userId: conn.user_id, success: false, error: err.message, duration });
+        console.error('[SYNC-ALL] ✗ ' + conn.provider + ' failed (' + duration + 'ms):', err.message);
       }
     }
-    res.json({ success: true, results });
+
+    const totalDuration = Date.now() - startTime;
+    console.log('[SYNC-ALL] Complete! Total duration: ' + totalDuration + 'ms');
+    res.json({ success: true, results, totalDuration });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
 cron.schedule('0 2 * * *', async () => {
-  console.log('[CRON] Nightly sync...');
+  console.log('[CRON] Nightly sync starting...');
+  const startTime = Date.now();
+  let totalSucceeded = 0;
+  let totalFailed = 0;
+
   try {
     const { data: connections } = await supabase.from('bank_connections').select('*').eq('auto_sync', true);
+    console.log('[CRON] Found ' + (connections?.length || 0) + ' connections to sync');
+
     for (const conn of (connections || [])) {
+      const connStartTime = Date.now();
       try {
         const creds = JSON.parse(Buffer.from(conn.encrypted_credentials, 'base64').toString());
         const pt = PROVIDER_MAP[conn.provider];
-        if (!pt) continue;
+        if (!pt) {
+          console.log('[CRON] Unsupported provider: ' + conn.provider);
+          continue;
+        }
+
         const accounts = await scrapeProvider(pt, creds);
-        await saveTransactionsToSupabase(conn.user_id, accounts, conn.provider);
-        console.log('[CRON] Synced ' + conn.provider);
+        const { totalSaved } = await saveTransactionsToSupabase(conn.user_id, accounts, conn.provider);
+
+        // Update connection status to active
+        await supabase.from('open_banking_connections').upsert({
+          user_id: conn.user_id,
+          provider_name: conn.provider,
+          provider_code: conn.provider,
+          connection_status: 'active',
+          last_sync: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,provider_code' });
+
+        const duration = Date.now() - connStartTime;
+        await logSyncAttempt(conn.user_id, conn.provider, 'success', null, accounts.length);
+        console.log('[CRON] ✓ ' + conn.provider + ' synced (' + totalSaved + ' transactions, ' + duration + 'ms)');
+        totalSucceeded++;
       } catch (err) {
-        console.error('[CRON] Error ' + conn.provider + ':', err.message);
+        const duration = Date.now() - connStartTime;
+        await logSyncAttempt(conn.user_id, conn.provider, 'failed', err.message);
+        console.error('[CRON] ✗ ' + conn.provider + ' failed (' + duration + 'ms):', err.message);
+        totalFailed++;
       }
     }
+
+    const totalDuration = Date.now() - startTime;
+    console.log('[CRON] Done! Succeeded: ' + totalSucceeded + ', Failed: ' + totalFailed + ', Total: ' + totalDuration + 'ms');
   } catch (error) {
-    console.error('[CRON] Fatal:', error);
+    const totalDuration = Date.now() - startTime;
+    console.error('[CRON] Fatal error after ' + totalDuration + 'ms:', error.message);
   }
 }, { timezone: 'Asia/Jerusalem' });
 
