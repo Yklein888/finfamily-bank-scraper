@@ -275,7 +275,7 @@ app.get('/providers', (req, res) => {
 async function logSyncAttempt(userId, provider, status, errorMessage = null, transactionsAdded = 0) {
   try {
     // Find the connection to link the sync history
-    const { data: connection } = await supabase
+    const { data: connection } = await getSupabase()
       .from('open_banking_connections')
       .select('id')
       .eq('user_id', userId)
