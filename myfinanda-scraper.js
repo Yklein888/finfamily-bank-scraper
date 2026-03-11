@@ -34,13 +34,16 @@ async function loginToMyFinanda(page) {
   console.log('[MyFinanda] Navigating to login page...');
   await page.goto('https://premium.finanda.co.il/login', { waitUntil: 'networkidle2' });
 
-  // Fill email
-  await page.type('input[type="email"]', MYFINANDA_EMAIL);
+  // Wait for email input to appear
+  await page.waitForSelector('input[type="email"]', { timeout: 10000 });
 
-  // Fill password
+  // Fill email and password
+  await page.type('input[type="email"]', MYFINANDA_EMAIL);
   await page.type('input[type="password"]', MYFINANDA_PASSWORD);
 
-  // Click login button (find by text since :contains() is not valid CSS)
+  console.log('[MyFinanda] Credentials filled, clicking login...');
+
+  // Click login button
   await page.evaluate(() => {
     const buttons = [...document.querySelectorAll('button, input[type="submit"]')];
     const loginBtn = buttons.find(b => b.textContent.includes('כניסה') || b.textContent.includes('Login'));
@@ -48,24 +51,33 @@ async function loginToMyFinanda(page) {
     else if (buttons.length > 0) buttons[buttons.length - 1].click();
   });
 
-  // Wait for redirect to dashboard
-  await page.waitForNavigation({ waitUntil: 'networkidle2' });
+  // Wait for URL to change away from /login - works correctly with SPAs
+  // This properly detects that login completed and app redirected to dashboard
+  await page.waitForFunction(
+    () => !window.location.href.includes('/login'),
+    { timeout: 30000 }
+  );
 
-  console.log('[MyFinanda] Login successful!');
+  const postLoginUrl = page.url();
+  console.log('[MyFinanda] Login successful! Redirected to:', postLoginUrl);
 }
 
 async function extractAccountsData(page) {
   console.log('[MyFinanda] Extracting accounts data...');
 
-  // Navigate to accounts page if not already there
-  if (!page.url().includes('unified_checking')) {
-    await page.goto('https://premium.finanda.co.il/checking-cards-cash/unified_checking', {
-      waitUntil: 'networkidle2'
-    });
+  // Navigate to accounts page
+  console.log('[MyFinanda] Navigating to unified_checking...');
+  await page.goto('https://premium.finanda.co.il/checking-cards-cash/unified_checking', {
+    waitUntil: 'networkidle2'
+  });
+
+  // If redirected back to login - auth failed
+  if (page.url().includes('/login')) {
+    throw new Error('Session expired after login - redirected back to login page');
   }
 
-  // Wait extra time for React/Angular to render data
-  await new Promise(r => setTimeout(r, 3000));
+  // Wait for SPA content to fully render
+  await new Promise(r => setTimeout(r, 4000));
 
   console.log('[MyFinanda] Current URL:', page.url());
 
@@ -160,7 +172,12 @@ async function extractCreditCardsData(page) {
       timeout: 20000
     });
 
-    await new Promise(r => setTimeout(r, 3000));
+    if (page.url().includes('/login')) {
+      console.warn('[MyFinanda] Credit cards: redirected to login, skipping');
+      return [];
+    }
+
+    await new Promise(r => setTimeout(r, 4000));
 
     const domDebug = await page.evaluate(() => {
       const agRows = document.querySelectorAll('.ag-row');
