@@ -163,7 +163,7 @@ async function saveTransactionsToSupabase(userId, accounts, providerName) {
 
   for (const account of accounts) {
     const accountNumber = account.accountNumber || providerName;
-    const { data: existingAccount } = await supabase
+    const { data: existingAccount } = await getSupabase()
       .from('accounts').select('id')
       .eq('user_id', userId)
       .eq('account_number', accountNumber)
@@ -200,7 +200,7 @@ async function saveTransactionsToSupabase(userId, accounts, providerName) {
       const type = (txn.chargedAmount || txn.originalAmount || 0) < 0 ? 'expense' : 'income';
 
       // Dedup check using correct column name
-      const { data: existing } = await supabase
+      const { data: existing } = await getSupabase()
         .from('transactions').select('id')
         .eq('user_id', userId).eq('account_id', accountId)
         .eq('amount', amount)
@@ -342,7 +342,8 @@ app.post('/myfinanda', async (req, res) => {
   const startTime = Date.now();
   try {
     console.log('[MyFinanda] Starting sync for user ' + user.id);
-    const result = await scrapeMyFinanda(user.id);
+    const chromePath = await getChromePath();
+    const result = await scrapeMyFinanda(user.id, chromePath);
 
     const duration = Date.now() - startTime;
     console.log('[MyFinanda] Sync completed in ' + duration + 'ms');

@@ -10,8 +10,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// Chromium is loaded in server.js, we'll use getChromePath() which handles fallbacks
-let chromium = null;
+// Chromium path is passed from server.js which loads @sparticuz/chromium
 
 // Lazy initialize Supabase to avoid startup errors if env vars are missing
 let supabase = null;
@@ -31,15 +30,6 @@ function getSupabase() {
 const MYFINANDA_EMAIL = process.env.MYFINANDA_EMAIL;
 const MYFINANDA_PASSWORD = process.env.MYFINANDA_PASSWORD;
 
-async function getChromePath() {
-  // Try environment variable first
-  if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-    return process.env.PUPPETEER_EXECUTABLE_PATH;
-  }
-  // Otherwise use system Chrome (Puppeteer will find it)
-  return undefined;
-}
-
 async function loginToMyFinanda(page) {
   console.log('[MyFinanda] Navigating to login page...');
   await page.goto('https://premium.finanda.co.il/login', { waitUntil: 'networkidle2' });
@@ -50,8 +40,13 @@ async function loginToMyFinanda(page) {
   // Fill password
   await page.type('input[type="password"]', MYFINANDA_PASSWORD);
 
-  // Click login button
-  await page.click('button:contains("כניסה")');
+  // Click login button (find by text since :contains() is not valid CSS)
+  await page.evaluate(() => {
+    const buttons = [...document.querySelectorAll('button, input[type="submit"]')];
+    const loginBtn = buttons.find(b => b.textContent.includes('כניסה') || b.textContent.includes('Login'));
+    if (loginBtn) loginBtn.click();
+    else if (buttons.length > 0) buttons[buttons.length - 1].click();
+  });
 
   // Wait for redirect to dashboard
   await page.waitForNavigation({ waitUntil: 'networkidle2' });
@@ -159,14 +154,15 @@ async function saveDataToSupabase(userId, accountsData, creditCardsData) {
         notes: `[MyFinanda] ${txn.account} - ${txn.category}`,
       }));
 
-      const { error: txnError, data: savedTxns } = await supabase
+      const { error: txnError, data: savedTxns } = await getSupabase()
         .from('transactions')
-        .insert(transactionsToSave);
+        .insert(transactionsToSave)
+        .select();
 
       if (txnError) {
         console.error('[MyFinanda] Error saving transactions:', txnError.message);
       } else {
-        console.log('[MyFinanda] Saved ' + savedTxns.length + ' transactions');
+        console.log('[MyFinanda] Saved ' + (savedTxns?.length || 0) + ' transactions');
       }
     }
 
@@ -182,14 +178,15 @@ async function saveDataToSupabase(userId, accountsData, creditCardsData) {
         notes: '[MyFinanda] Credit Card',
       }));
 
-      const { error: ccError, data: savedCC } = await supabase
+      const { error: ccError, data: savedCC } = await getSupabase()
         .from('transactions')
-        .insert(creditTxnsToSave);
+        .insert(creditTxnsToSave)
+        .select();
 
       if (ccError) {
         console.error('[MyFinanda] Error saving credit card transactions:', ccError.message);
       } else {
-        console.log('[MyFinanda] Saved ' + savedCC.length + ' credit card transactions');
+        console.log('[MyFinanda] Saved ' + (savedCC?.length || 0) + ' credit card transactions');
       }
     }
 
@@ -226,8 +223,8 @@ function parseDate(dateStr) {
   return new Date().toISOString().split('T')[0];
 }
 
-async function scrapeMyFinanda(userId) {
-  const execPath = await getChromePath();
+async function scrapeMyFinanda(userId, chromePath) {
+  const execPath = chromePath || process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
 
   const defaultArgs = [
     '--no-sandbox',
