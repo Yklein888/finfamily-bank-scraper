@@ -156,9 +156,6 @@ async function verifyAuthToken(req) {
   }
   const token = authHeader.split(' ')[1];
   try {
-    console.log('[Auth] Verifying token (first 20 chars):', token.substring(0, 20) + '...');
-    console.log('[Auth] Supabase URL:', process.env.SUPABASE_URL);
-    console.log('[Auth] Service key set:', !!process.env.SUPABASE_SERVICE_ROLE_KEY);
     const { data, error } = await getSupabase().auth.getUser(token);
     if (error) {
       console.error('[Auth] Supabase auth error:', error.message, error.status);
@@ -350,29 +347,6 @@ app.post('/scrape', async (req, res) => {
     await logSyncAttempt(user.id, provider, 'failed', error.message, 0);
     console.error('[' + new Date().toISOString() + '] Error after ' + duration + 'ms:', error.message);
     res.status(500).json({ success: false, error: error.message || 'Scraping error', duration });
-  }
-});
-
-// Debug endpoint to test auth
-app.post('/debug-auth', async (req, res) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.json({ error: 'No Bearer token', hasHeader: !!authHeader });
-  }
-  const token = authHeader.split(' ')[1];
-  try {
-    const sb = getSupabase();
-    const { data, error } = await sb.auth.getUser(token);
-    res.json({
-      supabaseUrl: process.env.SUPABASE_URL,
-      hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-      serviceKeyPrefix: process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 20),
-      authError: error ? { message: error.message, status: error.status } : null,
-      hasUser: !!data?.user,
-      userId: data?.user?.id || null,
-    });
-  } catch (err) {
-    res.json({ exception: err.message });
   }
 });
 
