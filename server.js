@@ -152,9 +152,14 @@ async function verifyAuthToken(req) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
   const token = authHeader.split(' ')[1];
-  const { data: { user }, error } = await getSupabase().auth.getUser(token);
-  if (error || !user) return null;
-  return user;
+  try {
+    const { data, error } = await getSupabase().auth.getUser(token);
+    if (error || !data?.user) return null;
+    return data.user;
+  } catch (err) {
+    console.error('[Auth] Token verification failed:', err.message);
+    return null;
+  }
 }
 
 async function saveTransactionsToSupabase(userId, accounts, providerName) {
