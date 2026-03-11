@@ -16,10 +16,19 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// Lazy initialize Supabase to avoid startup errors if env vars are missing
+let supabase = null;
+function getSupabase() {
+  if (!supabase) {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) {
+      throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars');
+    }
+    supabase = createClient(url, key);
+  }
+  return supabase;
+}
 
 const PROVIDER_MAP = {
   'hapoalim':     CompanyTypes.hapoalim,
@@ -143,7 +152,7 @@ async function verifyAuthToken(req) {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) return null;
   const token = authHeader.split(' ')[1];
-  const { data: { user }, error } = await supabase.auth.getUser(token);
+  const { data: { user }, error } = await getSupabase().auth.getUser(token);
   if (error || !user) return null;
   return user;
 }
@@ -163,13 +172,13 @@ async function saveTransactionsToSupabase(userId, accounts, providerName) {
     let accountId;
     if (existingAccount) {
       accountId = existingAccount.id;
-      await supabase.from('accounts').update({
+      await getSupabase().from('accounts').update({
         balance: account.balance || 0,
         last_sync: new Date().toISOString(),
         is_synced: true,
       }).eq('id', accountId);
     } else {
-      const { data: newAccount, error: insertErr } = await supabase.from('accounts').insert({
+      const { data: newAccount, error: insertErr } = await getSupabase().from('accounts').insert({
         user_id: userId,
         name: providerName + ' - ' + accountNumber,
         bank_name: providerName,
@@ -200,7 +209,7 @@ async function saveTransactionsToSupabase(userId, accounts, providerName) {
         .single();
       if (existing) { totalSkipped++; continue; }
 
-      const { error: txnErr } = await supabase.from('transactions').insert({
+      const { error: txnErr } = await getSupabase().from('transactions').insert({
         user_id: userId,
         account_id: accountId,
         amount,
@@ -273,7 +282,7 @@ async function logSyncAttempt(userId, provider, status, errorMessage = null, tra
       .eq('provider_code', provider)
       .single();
 
-    await supabase.from('sync_history').insert({
+    await getSupabase().from('sync_history').insert({
       user_id: userId,
       connection_id: connection?.id || null,
       sync_type: 'manual', // or 'automatic' for cron jobs
@@ -304,7 +313,7 @@ app.post('/scrape', async (req, res) => {
     const { totalSaved, totalSkipped } = await saveTransactionsToSupabase(user.id, accounts, provider);
 
     // Upsert open_banking_connections so UI shows the bank as active
-    await supabase.from('open_banking_connections').upsert({
+    await getSupabase().from('open_banking_connections').upsert({
       user_id: user.id,
       provider_name: provider,
       provider_code: provider,
@@ -361,7 +370,7 @@ app.post('/sync-all', async (req, res) => {
 
   const startTime = Date.now();
   try {
-    const { data: connections } = await supabase.from('bank_connections').select('*').eq('auto_sync', true);
+    const { data: connections } = await getSupabase().from('bank_connections').select('*').eq('auto_sync', true);
     const results = [];
 
     console.log('[SYNC-ALL] Starting sync for ' + (connections?.length || 0) + ' connections');
@@ -380,7 +389,7 @@ app.post('/sync-all', async (req, res) => {
         const stats = await saveTransactionsToSupabase(conn.user_id, accounts, conn.provider);
 
         // Update connection status
-        await supabase.from('open_banking_connections').upsert({
+        await getSupabase().from('open_banking_connections').upsert({
           user_id: conn.user_id,
           provider_name: conn.provider,
           provider_code: conn.provider,
@@ -416,7 +425,7 @@ cron.schedule('0 2 * * *', async () => {
   let totalFailed = 0;
 
   try {
-    const { data: connections } = await supabase.from('bank_connections').select('*').eq('auto_sync', true);
+    const { data: connections } = await getSupabase().from('bank_connections').select('*').eq('auto_sync', true);
     console.log('[CRON] Found ' + (connections?.length || 0) + ' connections to sync');
 
     for (const conn of (connections || [])) {
@@ -433,7 +442,7 @@ cron.schedule('0 2 * * *', async () => {
         const { totalSaved } = await saveTransactionsToSupabase(conn.user_id, accounts, conn.provider);
 
         // Update connection status to active
-        await supabase.from('open_banking_connections').upsert({
+        await getSupabase().from('open_banking_connections').upsert({
           user_id: conn.user_id,
           provider_name: conn.provider,
           provider_code: conn.provider,

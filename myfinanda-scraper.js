@@ -13,10 +13,19 @@ dotenv.config();
 // Chromium is loaded in server.js, we'll use getChromePath() which handles fallbacks
 let chromium = null;
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-);
+// Lazy initialize Supabase to avoid startup errors if env vars are missing
+let supabase = null;
+function getSupabase() {
+  if (!supabase) {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!url || !key) {
+      throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY env vars');
+    }
+    supabase = createClient(url, key);
+  }
+  return supabase;
+}
 
 // MyFinanda credentials from env
 const MYFINANDA_EMAIL = process.env.MYFINANDA_EMAIL;
@@ -185,7 +194,7 @@ async function saveDataToSupabase(userId, accountsData, creditCardsData) {
     }
 
     // Mark MyFinanda as connected
-    await supabase.from('open_banking_connections').upsert({
+    await getSupabase().from('open_banking_connections').upsert({
       user_id: userId,
       provider_name: 'MyFinanda',
       provider_code: 'myfinanda',
