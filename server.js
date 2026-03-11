@@ -4,7 +4,7 @@ import cors from 'cors';
 import cron from 'node-cron';
 import { createClient } from '@supabase/supabase-js';
 import { CompanyTypes, createScraper } from 'israeli-bank-scrapers';
-import { scrapeMyFinanda, startMyFinandaSession, completeOtpAndScrape, extractAndSaveData } from './myfinanda-scraper.js';
+import { scrapeMyFinanda, startMyFinandaSession, completeOtpAndScrape, extractAndSaveData, autoScrapeWithCookies } from './myfinanda-scraper.js';
 
 dotenv.config();
 
@@ -566,6 +566,36 @@ cron.schedule('0 2 * * *', async () => {
   } catch (error) {
     const totalDuration = Date.now() - startTime;
     console.error('[CRON] Fatal error after ' + totalDuration + 'ms:', error.message);
+  }
+
+  // ── MyFinanda auto-sync (uses saved cookies from last manual OTP sync) ──
+  try {
+    console.log('[CRON] Starting MyFinanda auto-sync...');
+    const chromePath = await getChromePath();
+
+    // Get all users who have a MyFinanda connection
+    const { data: myFinandaConns } = await getSupabase()
+      .from('open_banking_connections')
+      .select('user_id')
+      .eq('provider_code', 'myfinanda')
+      .eq('connection_status', 'active');
+
+    for (const conn of (myFinandaConns || [])) {
+      try {
+        const result = await autoScrapeWithCookies(conn.user_id, chromePath);
+        if (result.skipped) {
+          console.log('[CRON] MyFinanda skipped for user ' + conn.user_id + ':', result.reason);
+        } else {
+          console.log('[CRON] ✓ MyFinanda synced for user ' + conn.user_id + ', saved:', result.transactionsSaved);
+          totalSucceeded++;
+        }
+      } catch (err) {
+        console.error('[CRON] ✗ MyFinanda failed for user ' + conn.user_id + ':', err.message);
+        totalFailed++;
+      }
+    }
+  } catch (err) {
+    console.error('[CRON] MyFinanda sync error:', err.message);
   }
 }, { timezone: 'Asia/Jerusalem' });
 
