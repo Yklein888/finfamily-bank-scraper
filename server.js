@@ -4,7 +4,7 @@ import cors from 'cors';
 import cron from 'node-cron';
 import { createClient } from '@supabase/supabase-js';
 import { CompanyTypes, createScraper } from 'israeli-bank-scrapers';
-import { scrapeMyFinanda } from './myfinanda-scraper.js';
+import { scrapeMyFinanda, startMyFinandaSession, completeOtpAndScrape, extractAndSaveData } from './myfinanda-scraper.js';
 
 dotenv.config();
 
@@ -350,7 +350,92 @@ app.post('/scrape', async (req, res) => {
   }
 });
 
-// MyFinanda Integration Endpoint
+// MyFinanda OTP Sessions - stores active browser instances waiting for OTP
+const myFinandaSessions = new Map(); // sessionId → { browser, page, userId, createdAt }
+
+// Cleanup stale sessions older than 5 minutes
+setInterval(() => {
+  const fiveMinutesAgo = Date.now() - 5 * 60 * 1000;
+  for (const [id, session] of myFinandaSessions.entries()) {
+    if (session.createdAt < fiveMinutesAgo) {
+      console.log('[MyFinanda] Cleaning up stale session:', id);
+      session.browser.close().catch(() => {});
+      myFinandaSessions.delete(id);
+    }
+  }
+}, 60 * 1000);
+
+// Phase 1: Start login, detect if OTP is needed
+app.post('/myfinanda/start', async (req, res) => {
+  const user = await verifyAuthToken(req);
+  if (!user) return res.status(401).json({ error: 'Authentication failed' });
+
+  const startTime = Date.now();
+  try {
+    console.log('[MyFinanda] Starting login for user ' + user.id);
+    const chromePath = await getChromePath();
+    const session = await startMyFinandaSession(chromePath);
+
+    if (session.needsOtp) {
+      // Store session and return sessionId to frontend
+      const sessionId = Math.random().toString(36).substring(2) + Date.now().toString(36);
+      myFinandaSessions.set(sessionId, {
+        browser: session.browser,
+        page: session.page,
+        userId: user.id,
+        createdAt: Date.now(),
+      });
+      console.log('[MyFinanda] OTP required, session stored:', sessionId);
+      return res.json({ needsOtp: true, sessionId });
+    }
+
+    // No OTP - extract data directly
+    const { transactionsExtracted } = await extractAndSaveData(session.page, user.id);
+    await session.browser.close();
+
+    const duration = Date.now() - startTime;
+    console.log('[MyFinanda] Sync done (no OTP), transactions:', transactionsExtracted, 'duration:', duration + 'ms');
+    return res.json({ needsOtp: false, success: true, transactionsExtracted, duration });
+
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    console.error('[MyFinanda] Start error after ' + duration + 'ms:', error.message);
+    return res.status(500).json({ success: false, error: error.message, duration });
+  }
+});
+
+// Phase 2: Complete login with OTP code
+app.post('/myfinanda/complete', async (req, res) => {
+  const user = await verifyAuthToken(req);
+  if (!user) return res.status(401).json({ error: 'Authentication failed' });
+
+  const { sessionId, otp } = req.body;
+  if (!sessionId || !otp) return res.status(400).json({ error: 'sessionId and otp are required' });
+
+  const session = myFinandaSessions.get(sessionId);
+  if (!session) return res.status(404).json({ error: 'Session not found or expired. Please start again.' });
+  if (session.userId !== user.id) return res.status(403).json({ error: 'Session belongs to different user' });
+
+  myFinandaSessions.delete(sessionId);
+
+  const startTime = Date.now();
+  try {
+    console.log('[MyFinanda] Completing OTP login for user ' + user.id);
+    const result = await completeOtpAndScrape(session.browser, session.page, otp, user.id);
+    await session.browser.close();
+
+    const duration = Date.now() - startTime;
+    console.log('[MyFinanda] OTP sync done, transactions:', result.transactionsExtracted, 'duration:', duration + 'ms');
+    return res.json({ ...result, duration });
+  } catch (error) {
+    session.browser.close().catch(() => {});
+    const duration = Date.now() - startTime;
+    console.error('[MyFinanda] Complete error after ' + duration + 'ms:', error.message);
+    return res.status(500).json({ success: false, error: error.message, duration });
+  }
+});
+
+// MyFinanda Integration Endpoint (legacy - kept for backward compat)
 app.post('/myfinanda', async (req, res) => {
   const user = await verifyAuthToken(req);
   if (!user) return res.status(401).json({ error: 'Authentication failed' });
@@ -364,18 +449,14 @@ app.post('/myfinanda', async (req, res) => {
     const duration = Date.now() - startTime;
     console.log('[MyFinanda] Sync completed in ' + duration + 'ms');
 
-    res.json({
-      success: true,
-      message: 'MyFinanda sync complete',
-      ...result,
-      duration
-    });
+    res.json({ success: true, message: 'MyFinanda sync complete', ...result, duration });
   } catch (error) {
     const duration = Date.now() - startTime;
     console.error('[MyFinanda] Error after ' + duration + 'ms:', error.message);
     res.status(500).json({
       success: false,
       error: error.message || 'MyFinanda sync failed',
+      needsOtp: error.message === 'OTP_REQUIRED',
       duration
     });
   }

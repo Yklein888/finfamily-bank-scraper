@@ -389,59 +389,169 @@ function parseDate(dateStr) {
   return new Date().toISOString().split('T')[0];
 }
 
-async function scrapeMyFinanda(userId, chromePath) {
+function createBrowser(chromePath) {
   const execPath = chromePath || process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
-
   const defaultArgs = [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-gpu',
-    '--single-process',
-    '--no-zygote'
+    '--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu',
+    '--single-process', '--no-zygote', '--disable-dev-shm-usage',
   ];
+  console.log('[MyFinanda] Starting browser with execPath: ' + (execPath || 'auto-detect'));
+  return puppeteer.launch({
+    args: defaultArgs,
+    executablePath: execPath || undefined,
+    headless: true,
+  });
+}
 
+// Phase 1: Start login, detect if OTP is needed
+// Returns { browser, page, needsOtp, sessionReady }
+async function startMyFinandaSession(chromePath) {
+  const browser = await createBrowser(chromePath);
+  const page = await browser.newPage();
+  page.setDefaultTimeout(30000);
+  page.setDefaultNavigationTimeout(30000);
+  await page.setViewport({ width: 1280, height: 800 });
+
+  // Navigate and fill credentials
+  await loginToMyFinanda(page);
+
+  // After loginToMyFinanda returns, check current state
+  const state = await page.evaluate(() => {
+    const inputs = [...document.querySelectorAll('input')];
+    const otpInput = inputs.find(i =>
+      i.type === 'tel' || i.type === 'number' ||
+      (i.name || '').toLowerCase().match(/otp|code|token/) ||
+      (i.placeholder || '').match(/קוד|code/i) ||
+      (i.id || '').toLowerCase().match(/otp|code|token/)
+    );
+    const bodyText = document.body.innerText?.substring(0, 600) || '';
+    return {
+      url: window.location.href,
+      hasOtpInput: !!otpInput,
+      otpInputInfo: otpInput ? { type: otpInput.type, name: otpInput.name, id: otpInput.id, placeholder: otpInput.placeholder } : null,
+      bodyText,
+    };
+  });
+
+  console.log('[MyFinanda] Post-login state:', JSON.stringify({ url: state.url, hasOtpInput: state.hasOtpInput, otpInput: state.otpInputInfo }));
+
+  // Already fully logged in (URL changed from /login)
+  if (!state.url.includes('/login')) {
+    console.log('[MyFinanda] Logged in without OTP');
+    return { browser, page, needsOtp: false };
+  }
+
+  // OTP screen detected
+  const needsOtp = state.hasOtpInput ||
+    state.bodyText.includes('קוד') ||
+    state.bodyText.includes('אימות') ||
+    state.bodyText.includes('SMS');
+
+  console.log('[MyFinanda] OTP needed:', needsOtp, '| bodyText snippet:', state.bodyText.substring(0, 150));
+  return { browser, page, needsOtp };
+}
+
+// Phase 2: Enter OTP, wait for login to complete, then extract + save
+async function completeOtpAndScrape(browser, page, otp, userId) {
+  console.log('[MyFinanda] Entering OTP...');
+
+  // Try to type the OTP character by character into the right input
+  const fillResult = await page.evaluate((otpCode) => {
+    const inputs = [...document.querySelectorAll('input')];
+    // Look for OTP input
+    const otpInput = inputs.find(i =>
+      i.type === 'tel' || i.type === 'number' ||
+      (i.name || '').toLowerCase().match(/otp|code|token/) ||
+      (i.placeholder || '').match(/קוד|code/i) ||
+      (i.id || '').toLowerCase().match(/otp|code|token/)
+    );
+    // Fallback: first visible text/tel/number input that isn't email/password
+    const fallback = inputs.find(i =>
+      !['email', 'password', 'hidden'].includes(i.type) && i.offsetParent !== null
+    );
+    const target = otpInput || fallback;
+    if (!target) return 'no input found';
+    target.focus();
+    target.value = otpCode;
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+    target.dispatchEvent(new Event('change', { bubbles: true }));
+    return 'filled: ' + JSON.stringify({ type: target.type, name: target.name, id: target.id });
+  }, otp);
+  console.log('[MyFinanda] OTP fill result:', fillResult);
+
+  // Click the verify/submit button
+  const submitResult = await page.evaluate(() => {
+    const buttons = [...document.querySelectorAll('button, input[type="submit"]')];
+    const btn = buttons.find(b =>
+      b.textContent?.match(/אישור|אמת|כניסה|שלח|Verify|Submit|Continue/) ||
+      b.type === 'submit'
+    ) || buttons[buttons.length - 1];
+    if (btn) { btn.click(); return 'clicked: ' + (btn.textContent?.trim() || btn.type); }
+    return 'no button';
+  });
+  console.log('[MyFinanda] OTP submit result:', submitResult);
+
+  // Wait for URL to change away from /login
+  await page.waitForFunction(
+    () => !window.location.href.includes('/login'),
+    { timeout: 30000 }
+  );
+  console.log('[MyFinanda] OTP login complete, URL:', page.url());
+
+  // Let SPA auth state settle
+  await new Promise(r => setTimeout(r, 5000));
+
+  // Extract and save data
+  const accountsData = await extractAccountsData(page);
+  const creditCardsData = await extractCreditCardsData(page);
+  await saveDataToSupabase(userId, accountsData, creditCardsData);
+
+  const totalExtracted = (accountsData.transactions?.length || 0) + (creditCardsData?.length || 0);
+  console.log('[MyFinanda] Scraping complete after OTP. Transactions:', totalExtracted);
+
+  return {
+    success: true,
+    accountsExtracted: 1,
+    transactionsExtracted: totalExtracted,
+  };
+}
+
+async function scrapeMyFinanda(userId, chromePath) {
   let browser;
   try {
-    console.log('[MyFinanda] Starting browser with execPath: ' + (execPath || 'auto-detect'));
-    browser = await puppeteer.launch({
-      args: [...defaultArgs, '--disable-dev-shm-usage'],
-      executablePath: execPath || undefined,
-      headless: true,
-    });
+    const session = await startMyFinandaSession(chromePath);
+    browser = session.browser;
 
-    const page = await browser.newPage();
-    page.setDefaultTimeout(30000);
-    page.setDefaultNavigationTimeout(30000);
+    if (session.needsOtp) {
+      throw new Error('OTP_REQUIRED');
+    }
 
-    // Set viewport
-    await page.setViewport({ width: 1280, height: 800 });
-
-    // Login to MyFinanda
-    await loginToMyFinanda(page);
-
-    // Extract data from different sections
-    const accountsData = await extractAccountsData(page);
-    const creditCardsData = await extractCreditCardsData(page);
-
-    // Save to Supabase
+    // No OTP needed - extract directly
+    const accountsData = await extractAccountsData(session.page);
+    const creditCardsData = await extractCreditCardsData(session.page);
     await saveDataToSupabase(userId, accountsData, creditCardsData);
 
     console.log('[MyFinanda] Scraping completed successfully!');
-
     return {
       success: true,
       accountsExtracted: 1,
       transactionsExtracted: (accountsData.transactions?.length || 0) + (creditCardsData?.length || 0),
     };
-
   } catch (error) {
     console.error('[MyFinanda] Scraping failed:', error.message);
     throw error;
   } finally {
-    if (browser) {
-      await browser.close();
-    }
+    if (browser) await browser.close();
   }
 }
 
-export { scrapeMyFinanda };
+async function extractAndSaveData(page, userId) {
+  const accountsData = await extractAccountsData(page);
+  const creditCardsData = await extractCreditCardsData(page);
+  await saveDataToSupabase(userId, accountsData, creditCardsData);
+  return {
+    transactionsExtracted: (accountsData.transactions?.length || 0) + (creditCardsData?.length || 0),
+  };
+}
+
+export { scrapeMyFinanda, startMyFinandaSession, completeOtpAndScrape, extractAndSaveData };
