@@ -72,14 +72,15 @@ async function loginToMyFinanda(page) {
   });
   console.log('[MyFinanda] Click result:', clickResult);
 
-  // Wait for URL to change away from /login
+  // Wait for URL to move away from the exact /login page.
+  // Uses pathname.endsWith so that /login/enter-otp resolves correctly
+  // (includes('/login') would NOT work - /login/enter-otp still contains /login)
   try {
     await page.waitForFunction(
-      () => !window.location.href.includes('/login'),
+      () => !window.location.pathname.endsWith('/login'),
       { timeout: 30000 }
     );
   } catch (e) {
-    // Log page state on timeout to debug what's happening
     const timeoutDebug = await page.evaluate(() => ({
       url: window.location.href,
       title: document.title,
@@ -435,19 +436,25 @@ async function startMyFinandaSession(chromePath) {
 
   console.log('[MyFinanda] Post-login state:', JSON.stringify({ url: state.url, hasOtpInput: state.hasOtpInput, otpInput: state.otpInputInfo }));
 
-  // Already fully logged in (URL changed from /login)
+  // OTP screen: URL is /login/enter-otp or contains enter-otp
+  if (state.url.includes('enter-otp') || state.url.includes('/login/')) {
+    console.log('[MyFinanda] OTP screen detected via URL:', state.url);
+    return { browser, page, needsOtp: true };
+  }
+
+  // Fully logged in (URL moved completely away from /login)
   if (!state.url.includes('/login')) {
     console.log('[MyFinanda] Logged in without OTP');
     return { browser, page, needsOtp: false };
   }
 
-  // OTP screen detected
+  // Fallback: check DOM for OTP elements
   const needsOtp = state.hasOtpInput ||
     state.bodyText.includes('קוד') ||
     state.bodyText.includes('אימות') ||
     state.bodyText.includes('SMS');
 
-  console.log('[MyFinanda] OTP needed:', needsOtp, '| bodyText snippet:', state.bodyText.substring(0, 150));
+  console.log('[MyFinanda] OTP needed (DOM check):', needsOtp, '| bodyText:', state.bodyText.substring(0, 150));
   return { browser, page, needsOtp };
 }
 
@@ -479,11 +486,11 @@ async function completeOtpAndScrape(browser, page, otp, userId) {
   }, otp);
   console.log('[MyFinanda] OTP fill result:', fillResult);
 
-  // Click the verify/submit button
+  // Click the verify/submit button - MyFinanda uses "המשך" (Continue)
   const submitResult = await page.evaluate(() => {
     const buttons = [...document.querySelectorAll('button, input[type="submit"]')];
     const btn = buttons.find(b =>
-      b.textContent?.match(/אישור|אמת|כניסה|שלח|Verify|Submit|Continue/) ||
+      b.textContent?.match(/המשך|אישור|אמת|כניסה|שלח|Verify|Submit|Continue/) ||
       b.type === 'submit'
     ) || buttons[buttons.length - 1];
     if (btn) { btn.click(); return 'clicked: ' + (btn.textContent?.trim() || btn.type); }
@@ -491,9 +498,9 @@ async function completeOtpAndScrape(browser, page, otp, userId) {
   });
   console.log('[MyFinanda] OTP submit result:', submitResult);
 
-  // Wait for URL to change away from /login
+  // Wait for URL to move completely away from /login/* paths
   await page.waitForFunction(
-    () => !window.location.href.includes('/login'),
+    () => !window.location.pathname.startsWith('/login'),
     { timeout: 30000 }
   );
   console.log('[MyFinanda] OTP login complete, URL:', page.url());
