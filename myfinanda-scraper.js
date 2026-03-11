@@ -64,18 +64,70 @@ async function extractAccountsData(page) {
     });
   }
 
+  // Wait extra time for React/Angular to render data
+  await new Promise(r => setTimeout(r, 3000));
+
+  console.log('[MyFinanda] Current URL:', page.url());
+
+  // Debug: log DOM structure to understand what selectors to use
+  const domDebug = await page.evaluate(() => {
+    const tables = document.querySelectorAll('table');
+    const allRows = document.querySelectorAll('table tbody tr');
+    const roleRows = document.querySelectorAll('[role="row"]');
+    const gridcells = document.querySelectorAll('[role="gridcell"]');
+    const agGrid = document.querySelector('.ag-root, .ag-root-wrapper, ag-grid-angular');
+    const agRows = document.querySelectorAll('.ag-row, .ag-row-even, .ag-row-odd');
+    const agCells = document.querySelectorAll('.ag-cell');
+
+    // Sample first few cells text
+    const sampleCells = [...agCells].slice(0, 20).map(c => c.textContent?.trim()).filter(Boolean);
+    const sampleRows = [...agRows].slice(0, 3).map(r => r.className);
+
+    return {
+      tablesCount: tables.length,
+      tableRowsCount: allRows.length,
+      roleRowsCount: roleRows.length,
+      gridcellsCount: gridcells.length,
+      hasAgGrid: !!agGrid,
+      agRowsCount: agRows.length,
+      agCellsCount: agCells.length,
+      sampleAgCells: sampleCells,
+      sampleAgRowClasses: sampleRows,
+      bodyClasses: document.body.className.substring(0, 100),
+      pageTitle: document.title,
+    };
+  });
+
+  console.log('[MyFinanda] DOM Debug:', JSON.stringify(domDebug));
+
   // Extract data from page using evaluate
   const accountsData = await page.evaluate(() => {
-    // Get total balance from the summary section
-    const totalBalanceElement = document.querySelector('[class*="balance"]') ||
-                                document.querySelector('[class*="total"]');
-    const totalBalance = totalBalanceElement ?
-      parseFloat(totalBalanceElement.textContent.replace(/[^\d.-]/g, '')) : 0;
+    // Try ag-Grid first (common in Israeli fintech apps)
+    const agRows = document.querySelectorAll('.ag-row');
+    if (agRows.length > 0) {
+      const transactions = [];
+      agRows.forEach(row => {
+        const cells = row.querySelectorAll('.ag-cell');
+        if (cells.length >= 4) {
+          const texts = [...cells].map(c => c.textContent?.trim() || '');
+          const amount = parseFloat(texts[texts.length - 1]?.replace(/[^\d.-]/g, '') || '0');
+          if (amount !== 0) {
+            transactions.push({
+              date: texts[0] || '',
+              account: texts[1] || '',
+              description: texts[2] || '',
+              category: texts[3] || '',
+              amount,
+            });
+          }
+        }
+      });
+      return { totalBalance: 0, transactionCount: transactions.length, transactions, source: 'ag-grid' };
+    }
 
-    // Extract transactions from table
+    // Try standard table
     const transactions = [];
     const rows = document.querySelectorAll('table tbody tr, [role="row"]');
-
     rows.forEach(row => {
       const cells = row.querySelectorAll('td, [role="gridcell"]');
       if (cells.length >= 5) {
@@ -92,30 +144,63 @@ async function extractAccountsData(page) {
       }
     });
 
-    return {
-      totalBalance,
-      transactionCount: transactions.length,
-      transactions
-    };
+    return { totalBalance: 0, transactionCount: transactions.length, transactions, source: 'table' };
   });
 
+  console.log('[MyFinanda] Accounts source:', accountsData.source, '| Found:', accountsData.transactionCount, 'transactions');
   return accountsData;
 }
 
 async function extractCreditCardsData(page) {
   console.log('[MyFinanda] Extracting credit cards data...');
 
-  // Navigate to credit cards page
   try {
     await page.goto('https://premium.finanda.co.il/checking-cards-cash/credit-cards', {
       waitUntil: 'networkidle2',
-      timeout: 15000
+      timeout: 20000
     });
 
+    await new Promise(r => setTimeout(r, 3000));
+
+    const domDebug = await page.evaluate(() => {
+      const agRows = document.querySelectorAll('.ag-row');
+      const agCells = document.querySelectorAll('.ag-cell');
+      const sampleCells = [...agCells].slice(0, 15).map(c => c.textContent?.trim()).filter(Boolean);
+      return {
+        agRowsCount: agRows.length,
+        agCellsCount: agCells.length,
+        sampleCells,
+        pageTitle: document.title,
+      };
+    });
+    console.log('[MyFinanda] Credit cards DOM:', JSON.stringify(domDebug));
+
     const cardsData = await page.evaluate(() => {
+      // Try ag-Grid first
+      const agRows = document.querySelectorAll('.ag-row');
+      if (agRows.length > 0) {
+        const cards = [];
+        agRows.forEach(row => {
+          const cells = row.querySelectorAll('.ag-cell');
+          if (cells.length >= 3) {
+            const texts = [...cells].map(c => c.textContent?.trim() || '');
+            const amount = parseFloat(texts[texts.length - 1]?.replace(/[^\d.-]/g, '') || '0');
+            if (amount !== 0) {
+              cards.push({
+                date: texts[0] || '',
+                cardName: texts[1] || '',
+                description: texts[2] || '',
+                amount,
+              });
+            }
+          }
+        });
+        return cards;
+      }
+
+      // Fallback: standard table
       const cards = [];
       const rows = document.querySelectorAll('table tbody tr, [role="row"]');
-
       rows.forEach(row => {
         const cells = row.querySelectorAll('td, [role="gridcell"]');
         if (cells.length >= 4) {
@@ -127,10 +212,10 @@ async function extractCreditCardsData(page) {
           });
         }
       });
-
       return cards;
     });
 
+    console.log('[MyFinanda] Credit cards found:', cardsData.length);
     return cardsData;
   } catch (err) {
     console.error('[MyFinanda] Error extracting credit cards:', err.message);
