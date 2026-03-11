@@ -34,6 +34,15 @@ async function loginToMyFinanda(page) {
   console.log('[MyFinanda] Navigating to login page...');
   await page.goto('https://premium.finanda.co.il/login', { waitUntil: 'networkidle2' });
 
+  // Debug: check login page state before filling
+  const loginPageDebug = await page.evaluate(() => ({
+    hasEmailInput: !!document.querySelector('input[type="email"]'),
+    hasPasswordInput: !!document.querySelector('input[type="password"]'),
+    buttonTexts: [...document.querySelectorAll('button')].map(b => b.textContent?.trim()).filter(Boolean),
+    url: window.location.href,
+  }));
+  console.log('[MyFinanda] Login page state:', JSON.stringify(loginPageDebug));
+
   // Wait for email input to appear
   await page.waitForSelector('input[type="email"]', { timeout: 10000 });
 
@@ -43,23 +52,67 @@ async function loginToMyFinanda(page) {
 
   console.log('[MyFinanda] Credentials filled, clicking login...');
 
-  // Click login button
-  await page.evaluate(() => {
+  // Click login button - try multiple strategies
+  const clickResult = await page.evaluate(() => {
     const buttons = [...document.querySelectorAll('button, input[type="submit"]')];
-    const loginBtn = buttons.find(b => b.textContent.includes('כניסה') || b.textContent.includes('Login'));
-    if (loginBtn) loginBtn.click();
-    else if (buttons.length > 0) buttons[buttons.length - 1].click();
+    const loginBtn = buttons.find(b =>
+      b.textContent.includes('כניסה') ||
+      b.textContent.includes('Login') ||
+      b.type === 'submit'
+    );
+    if (loginBtn) {
+      loginBtn.click();
+      return 'clicked: ' + (loginBtn.textContent?.trim() || loginBtn.type);
+    }
+    if (buttons.length > 0) {
+      buttons[buttons.length - 1].click();
+      return 'clicked last button: ' + buttons[buttons.length - 1].textContent?.trim();
+    }
+    return 'no button found';
   });
+  console.log('[MyFinanda] Click result:', clickResult);
 
-  // Wait for URL to change away from /login - works correctly with SPAs
-  // This properly detects that login completed and app redirected to dashboard
-  await page.waitForFunction(
-    () => !window.location.href.includes('/login'),
-    { timeout: 30000 }
-  );
+  // Wait for URL to change away from /login
+  try {
+    await page.waitForFunction(
+      () => !window.location.href.includes('/login'),
+      { timeout: 30000 }
+    );
+  } catch (e) {
+    // Log page state on timeout to debug what's happening
+    const timeoutDebug = await page.evaluate(() => ({
+      url: window.location.href,
+      title: document.title,
+      bodyText: document.body.innerText?.substring(0, 300),
+      errorElements: [...document.querySelectorAll('.error, .alert, [class*="error"], [class*="Error"]')]
+        .map(el => el.textContent?.trim()).filter(Boolean),
+    }));
+    console.error('[MyFinanda] Login timeout. Page state:', JSON.stringify(timeoutDebug));
+    throw e;
+  }
 
   const postLoginUrl = page.url();
-  console.log('[MyFinanda] Login successful! Redirected to:', postLoginUrl);
+  console.log('[MyFinanda] Login URL changed to:', postLoginUrl);
+
+  // Wait for auth state to fully initialize in the SPA (localStorage, sessionStorage, in-memory state)
+  await new Promise(r => setTimeout(r, 6000));
+
+  // Debug: check localStorage for auth tokens after login
+  const authDebug = await page.evaluate(() => {
+    const items = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      items[key] = (localStorage.getItem(key) || '').substring(0, 80);
+    }
+    return {
+      localStorageCount: localStorage.length,
+      items,
+      currentUrl: window.location.href,
+    };
+  });
+  console.log('[MyFinanda] Auth state after login:', JSON.stringify(authDebug));
+
+  console.log('[MyFinanda] Login complete, current URL:', page.url());
 }
 
 async function extractAccountsData(page) {
@@ -68,16 +121,27 @@ async function extractAccountsData(page) {
   // Navigate to accounts page
   console.log('[MyFinanda] Navigating to unified_checking...');
   await page.goto('https://premium.finanda.co.il/checking-cards-cash/unified_checking', {
-    waitUntil: 'networkidle2'
+    waitUntil: 'networkidle2',
+    timeout: 30000,
   });
 
   // If redirected back to login - auth failed
   if (page.url().includes('/login')) {
+    // Log localStorage at this point for debugging
+    const lsDebug = await page.evaluate(() => {
+      const items = {};
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        items[k] = (localStorage.getItem(k) || '').substring(0, 80);
+      }
+      return { count: localStorage.length, items };
+    });
+    console.error('[MyFinanda] Redirected to login after navigation. localStorage:', JSON.stringify(lsDebug));
     throw new Error('Session expired after login - redirected back to login page');
   }
 
   // Wait for SPA content to fully render
-  await new Promise(r => setTimeout(r, 4000));
+  await new Promise(r => setTimeout(r, 5000));
 
   console.log('[MyFinanda] Current URL:', page.url());
 
