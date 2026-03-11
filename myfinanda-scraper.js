@@ -209,54 +209,88 @@ async function extractAccountsData(page) {
 
   console.log('[MyFinanda] DOM Debug:', JSON.stringify(domDebug));
 
-  // Extract data from page using evaluate
-  const accountsData = await page.evaluate(() => {
-    // Try ag-Grid first (common in Israeli fintech apps)
-    const agRows = document.querySelectorAll('.ag-row');
-    if (agRows.length > 0) {
-      const transactions = [];
-      agRows.forEach(row => {
-        const cells = row.querySelectorAll('.ag-cell');
-        if (cells.length >= 4) {
-          const texts = [...cells].map(c => c.textContent?.trim() || '');
-          const amount = parseFloat(texts[texts.length - 1]?.replace(/[^\d.-]/g, '') || '0');
-          if (amount !== 0) {
-            transactions.push({
-              date: texts[0] || '',
-              account: texts[1] || '',
-              description: texts[2] || '',
-              category: texts[3] || '',
-              amount,
-            });
-          }
-        }
-      });
-      return { totalBalance: 0, transactionCount: transactions.length, transactions, source: 'ag-grid' };
-    }
+  // Debug table structure to understand column layout
+  const tableStructure = await page.evaluate(() => {
+    const tables = [...document.querySelectorAll('table')];
+    return tables.map((tbl, i) => {
+      const headers = [...tbl.querySelectorAll('th')].map(th => th.textContent?.trim());
+      const firstRows = [...tbl.querySelectorAll('tbody tr')].slice(0, 3).map(row =>
+        [...row.querySelectorAll('td')].map(td => td.textContent?.trim().substring(0, 30))
+      );
+      return { tableIndex: i, headerCount: headers.length, headers, rowCount: tbl.querySelectorAll('tbody tr').length, firstRows };
+    });
+  });
+  console.log('[MyFinanda] Table structure:', JSON.stringify(tableStructure));
 
-    // Try standard table
+  // Extract transactions from all tables
+  const accountsData = await page.evaluate(() => {
     const transactions = [];
-    const rows = document.querySelectorAll('table tbody tr, [role="row"]');
-    rows.forEach(row => {
-      const cells = row.querySelectorAll('td, [role="gridcell"]');
-      if (cells.length >= 5) {
-        const transaction = {
-          date: cells[0]?.textContent?.trim() || '',
-          account: cells[1]?.textContent?.trim() || '',
-          description: cells[2]?.textContent?.trim() || '',
-          category: cells[3]?.textContent?.trim() || '',
-          amount: parseFloat(cells[4]?.textContent?.replace(/[^\d.-]/g, '') || '0'),
-        };
-        if (transaction.amount !== 0) {
-          transactions.push(transaction);
-        }
+
+    const tables = [...document.querySelectorAll('table')];
+    tables.forEach((tbl, tableIdx) => {
+      const headers = [...tbl.querySelectorAll('th')].map(th => th.textContent?.trim() || '');
+      const rows = [...tbl.querySelectorAll('tbody tr')];
+      if (rows.length < 1) return;
+
+      // Detect column indices from headers (Hebrew column names)
+      let dateIdx = -1, descIdx = -1, amountIdx = -1, balanceIdx = -1, refIdx = -1;
+      headers.forEach((h, i) => {
+        const lh = h.toLowerCase();
+        if (lh.includes('תאריך') || lh.includes('date')) dateIdx = i;
+        else if (lh.includes('תיאור') || lh.includes('פירוט') || lh.includes('עסקה') || lh.includes('description')) descIdx = i;
+        else if (lh.includes('סכום') || lh.includes('amount') || lh.includes('חיוב') || lh.includes('זיכוי')) amountIdx = i;
+        else if (lh.includes('יתרה') || lh.includes('balance')) balanceIdx = i;
+        else if (lh.includes('אסמכתא') || lh.includes('מס') || lh.includes('ref')) refIdx = i;
+      });
+
+      // Fallback: if no headers detected, try common layouts by position
+      const cellCount = rows[0]?.querySelectorAll('td').length || 0;
+      if (dateIdx === -1 && cellCount >= 3) {
+        // Common Israeli bank table: date | description | amount [| balance]
+        dateIdx = 0; descIdx = 1; amountIdx = cellCount >= 4 ? cellCount - 2 : 2;
       }
+
+      rows.forEach(row => {
+        const cells = [...row.querySelectorAll('td')];
+        if (cells.length < 2) return;
+
+        const allText = cells.map(c => c.textContent?.trim() || '');
+
+        const dateText = dateIdx >= 0 ? allText[dateIdx] : allText[0];
+        const descText = descIdx >= 0 ? allText[descIdx] : allText[1];
+
+        // For amount: try detected column, then look for a cell with ₪ or number pattern
+        let amountText = amountIdx >= 0 ? allText[amountIdx] : '';
+        if (!amountText || amountText === '') {
+          // Find first cell with a numeric amount pattern (includes comma or dot, more than 1 digit)
+          const amountCell = allText.find(t => /[\d,]+\.\d{2}/.test(t) || /^\-?[\d,]+$/.test(t.replace(/[₪\s]/g, '')));
+          amountText = amountCell || '';
+        }
+
+        const cleanAmount = amountText.replace(/[₪\s,]/g, '').replace(/[^\d.-]/g, '');
+        const amount = parseFloat(cleanAmount) || 0;
+
+        // Skip rows with no amount and no real description
+        if (!descText || descText.length < 1) return;
+
+        transactions.push({
+          date: dateText || '',
+          description: descText || '',
+          amount,
+          raw: allText, // keep raw for debugging
+          tableIndex: tableIdx,
+          headers: headers.slice(0, 6),
+        });
+      });
     });
 
-    return { totalBalance: 0, transactionCount: transactions.length, transactions, source: 'table' };
+    return { transactionCount: transactions.length, transactions, source: 'table-smart' };
   });
 
   console.log('[MyFinanda] Accounts source:', accountsData.source, '| Found:', accountsData.transactionCount, 'transactions');
+  if (accountsData.transactions.length > 0) {
+    console.log('[MyFinanda] Sample transactions:', JSON.stringify(accountsData.transactions.slice(0, 3)));
+  }
   return accountsData;
 }
 
@@ -342,13 +376,13 @@ async function saveDataToSupabase(userId, accountsData, creditCardsData) {
     if (accountsData.transactions && accountsData.transactions.length > 0) {
       const transactionsToSave = accountsData.transactions.map(txn => ({
         user_id: userId,
-        account_id: null, // We'll set this later if needed
+        account_id: null,
         amount: txn.amount,
         type: txn.amount > 0 ? 'income' : 'expense',
-        description: txn.description,
+        description: txn.description || txn.raw?.[1] || 'MyFinanda',
         transaction_date: parseDate(txn.date),
-        notes: `[MyFinanda] ${txn.account} - ${txn.category}`,
-      }));
+        notes: `[MyFinanda] table:${txn.tableIndex ?? ''} ${txn.amount !== 0 ? '' : '(no amount)'}`.trim(),
+      })).filter(t => t.description && t.description.length > 1);
 
       const { error: txnError, data: savedTxns } = await getSupabase()
         .from('transactions')
