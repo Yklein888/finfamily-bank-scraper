@@ -116,30 +116,62 @@ async function loginToMyFinanda(page) {
   console.log('[MyFinanda] Login complete, current URL:', page.url());
 }
 
+async function navigateToPage(page, targetPath, description) {
+  const targetUrl = 'https://premium.finanda.co.il' + targetPath;
+  console.log('[MyFinanda] Navigating to', description, '...');
+
+  // Strategy 1: Try clicking a nav link (SPA navigation - preserves in-memory auth)
+  const clickResult = await page.evaluate((path) => {
+    const allLinks = [...document.querySelectorAll('a[href]')];
+    const link = allLinks.find(a => {
+      const href = a.getAttribute('href') || '';
+      return href.includes(path.split('/').filter(Boolean).pop()) || a.href.includes(path);
+    });
+    if (link) {
+      link.click();
+      return 'link-click: ' + link.href;
+    }
+    return null;
+  }, targetPath);
+
+  if (clickResult) {
+    console.log('[MyFinanda] SPA link click:', clickResult);
+    await new Promise(r => setTimeout(r, 5000));
+    if (!page.url().includes('/login')) return true;
+    console.log('[MyFinanda] Link click led to login, falling back to pushState...');
+  }
+
+  // Strategy 2: pushState + popstate (React Router client-side nav)
+  const pushResult = await page.evaluate((path) => {
+    window.history.pushState({}, '', path);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+    return 'pushState: ' + path;
+  }, targetPath);
+  console.log('[MyFinanda] pushState nav:', pushResult);
+  await new Promise(r => setTimeout(r, 5000));
+
+  if (!page.url().includes('/login')) return true;
+  console.log('[MyFinanda] pushState led to login, falling back to goto...');
+
+  // Strategy 3: Full page navigation (last resort - may lose memory-only auth)
+  try {
+    await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  } catch (e) {
+    console.log('[MyFinanda] goto timeout/error (continuing):', e.message?.substring(0, 80));
+  }
+
+  if (page.url().includes('/login')) {
+    const debug = await page.evaluate(() => ({ url: window.location.href }));
+    console.error('[MyFinanda] All navigation strategies failed - session lost. URL:', debug.url);
+    throw new Error('Session lost - auth is memory-only and not persisted. Need cookie-based auth.');
+  }
+  return true;
+}
+
 async function extractAccountsData(page) {
   console.log('[MyFinanda] Extracting accounts data...');
 
-  // Navigate to accounts page
-  console.log('[MyFinanda] Navigating to unified_checking...');
-  await page.goto('https://premium.finanda.co.il/checking-cards-cash/unified_checking', {
-    waitUntil: 'networkidle2',
-    timeout: 30000,
-  });
-
-  // If redirected back to login - auth failed
-  if (page.url().includes('/login')) {
-    // Log localStorage at this point for debugging
-    const lsDebug = await page.evaluate(() => {
-      const items = {};
-      for (let i = 0; i < localStorage.length; i++) {
-        const k = localStorage.key(i);
-        items[k] = (localStorage.getItem(k) || '').substring(0, 80);
-      }
-      return { count: localStorage.length, items };
-    });
-    console.error('[MyFinanda] Redirected to login after navigation. localStorage:', JSON.stringify(lsDebug));
-    throw new Error('Session expired after login - redirected back to login page');
-  }
+  await navigateToPage(page, '/checking-cards-cash/unified_checking', 'unified_checking');
 
   // Wait for SPA content to fully render
   await new Promise(r => setTimeout(r, 5000));
@@ -232,10 +264,7 @@ async function extractCreditCardsData(page) {
   console.log('[MyFinanda] Extracting credit cards data...');
 
   try {
-    await page.goto('https://premium.finanda.co.il/checking-cards-cash/credit-cards', {
-      waitUntil: 'networkidle2',
-      timeout: 20000
-    });
+    await navigateToPage(page, '/checking-cards-cash/credit-cards', 'credit-cards');
 
     if (page.url().includes('/login')) {
       console.warn('[MyFinanda] Credit cards: redirected to login, skipping');
@@ -462,17 +491,35 @@ async function startMyFinandaSession(chromePath) {
 async function completeOtpAndScrape(browser, page, otp, userId) {
   console.log('[MyFinanda] Entering OTP...');
 
-  // Try to type the OTP character by character into the right input
+  // Set up API response interception BEFORE submitting OTP
+  // MyFinanda SPA loads financial data on initial authenticated render
+  const capturedApiData = { transactions: [], rawUrls: [] };
+  const responseHandler = async (response) => {
+    const url = response.url();
+    if (!url.includes('finanda') && !url.includes('myfinanda')) return;
+    try {
+      const ct = response.headers()['content-type'] || '';
+      if (!ct.includes('json')) return;
+      const body = await response.json().catch(() => null);
+      if (!body) return;
+      capturedApiData.rawUrls.push(url.replace(/^https?:\/\/[^/]+/, '').substring(0, 80));
+      const items = Array.isArray(body) ? body : (body.items || body.data || body.transactions || []);
+      if (Array.isArray(items) && items.length > 0) {
+        capturedApiData.transactions.push(...items);
+      }
+    } catch { /* ignore */ }
+  };
+  page.on('response', responseHandler);
+
+  // Fill OTP into the input
   const fillResult = await page.evaluate((otpCode) => {
     const inputs = [...document.querySelectorAll('input')];
-    // Look for OTP input
     const otpInput = inputs.find(i =>
       i.type === 'tel' || i.type === 'number' ||
       (i.name || '').toLowerCase().match(/otp|code|token/) ||
       (i.placeholder || '').match(/קוד|code/i) ||
       (i.id || '').toLowerCase().match(/otp|code|token/)
     );
-    // Fallback: first visible text/tel/number input that isn't email/password
     const fallback = inputs.find(i =>
       !['email', 'password', 'hidden'].includes(i.type) && i.offsetParent !== null
     );
@@ -505,13 +552,47 @@ async function completeOtpAndScrape(browser, page, otp, userId) {
   );
   console.log('[MyFinanda] OTP login complete, URL:', page.url());
 
-  // Let SPA auth state settle
-  await new Promise(r => setTimeout(r, 5000));
+  // Wait for profile-is-loading to redirect itself (the SPA sets up auth here)
+  if (page.url().includes('profile-is-loading')) {
+    console.log('[MyFinanda] Waiting for profile-is-loading to complete...');
+    try {
+      await page.waitForFunction(
+        () => !window.location.href.includes('profile-is-loading'),
+        { timeout: 45000 }
+      );
+      console.log('[MyFinanda] Profile loaded, URL:', page.url());
+    } catch {
+      console.log('[MyFinanda] Profile-is-loading still active after 45s, proceeding. URL:', page.url());
+    }
+  }
 
-  // Extract and save data
+  // Debug: check all storage + cookies NOW (before any navigation)
+  const authState = await page.evaluate(() => {
+    const ss = {}; for (let i = 0; i < sessionStorage.length; i++) { const k = sessionStorage.key(i); ss[k] = (sessionStorage.getItem(k) || '').substring(0, 80); }
+    const ls = {}; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); ls[k] = (localStorage.getItem(k) || '').substring(0, 80); }
+    return { ssCount: sessionStorage.length, ss, lsCount: localStorage.length, ls, url: window.location.href };
+  });
+  const cookies = await page.cookies();
+  console.log('[MyFinanda] Pre-navigation auth:', JSON.stringify({
+    url: authState.url,
+    sessionStorageCount: authState.ssCount,
+    sessionStorage: authState.ss,
+    localStorageCount: authState.lsCount,
+    localStorage: authState.ls,
+    cookieCount: cookies.length,
+    cookies: cookies.map(c => ({ name: c.name, httpOnly: c.httpOnly, expires: c.expires > 0 ? new Date(c.expires * 1000).toISOString() : 'session' })),
+  }));
+
+  // Extra settle time for SPA auth state
+  await new Promise(r => setTimeout(r, 3000));
+
+  // Extract and save data (uses SPA navigation to avoid losing session)
   const accountsData = await extractAccountsData(page);
   const creditCardsData = await extractCreditCardsData(page);
   await saveDataToSupabase(userId, accountsData, creditCardsData);
+
+  page.off('response', responseHandler);
+  console.log('[MyFinanda] API URLs captured during session:', capturedApiData.rawUrls);
 
   const totalExtracted = (accountsData.transactions?.length || 0) + (creditCardsData?.length || 0);
   console.log('[MyFinanda] Scraping complete after OTP. Transactions:', totalExtracted);
