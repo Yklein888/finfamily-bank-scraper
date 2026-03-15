@@ -31,22 +31,9 @@ function getSupabase() {
 }
 
 const PROVIDER_MAP = {
-  'hapoalim':     CompanyTypes.hapoalim,
-  'leumi':        CompanyTypes.leumi,
-  'discount':     CompanyTypes.discount,
-  'mizrahi':      CompanyTypes.mizrahi,
-  'otsarHahayal': CompanyTypes.otsarHahayal,
-  'union':        CompanyTypes.unionBank,
-  'beinleumi':    CompanyTypes.beinleumi,
-  'fibi':         CompanyTypes.fibi,
-  'yahav':        CompanyTypes.yahav,
-  'massad':       CompanyTypes.massad,
-  'isracard':     CompanyTypes.isracard,
-  'cal':          CompanyTypes.cal,
-  'visaCal':      CompanyTypes.visaCal,  // Both 'cal' and 'visaCal' work
-  'max':          CompanyTypes.max,
-  'diners':       CompanyTypes.diners,
-  'amex':         CompanyTypes.amex,
+  'hapoalim': CompanyTypes.hapoalim,
+  'cal':      CompanyTypes.cal,
+  'visaCal':  CompanyTypes.visaCal,  // Frontend sends 'visaCal', backend uses 'cal'
 };
 
 // Chrome binary - try @sparticuz/chromium first
