@@ -94,25 +94,21 @@ async function scrapeProvider(providerType, credentials, attempt = 1) {
   const userDataArgs = [`--user-data-dir=${userDataDir}`];
 
   try {
-    console.log('[Scraper] Starting with settings: headless=false, showBrowser=true, timeout=180s');
+    console.log('[Scraper] Starting with settings: headless=true, showBrowser=false, timeout=180s');
 
-    // Try with headless: false (showBrowser: true) to avoid detection
-    // Some banks (like Hapoalim) detect Puppeteer in headless mode
     const scraper = createScraper({
       companyId: providerType,
       startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
       combineInstallments: false,
-      showBrowser: true,  // CHANGED: Try with browser visible
+      showBrowser: false,
       executablePath: execPath,
       args: [
         ...defaultArgs,
         '--disable-dev-shm-usage',
         ...stealthArgs,
-        ...userDataArgs,  // Persistent user data dir
-        '--start-maximized',  // Maximize window
+        ...userDataArgs,
       ],
-      timeout: 180000, // Increased to 3 minutes
-      headless: false,  // Explicitly disable headless mode
+      timeout: 180000,
     });
 
     // Add hard timeout with Promise.race to prevent hanging
