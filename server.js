@@ -31,9 +31,8 @@ function getSupabase() {
 
 const PROVIDER_MAP = {
   'hapoalim': CompanyTypes.hapoalim,
-  'cal':      CompanyTypes.cal,
-  'visaCal':  CompanyTypes.visaCal,  // Frontend sends 'visaCal', backend uses 'cal'
-  'fibi':     CompanyTypes.fibi,     // Pagi (פועלי אגודת ישראל)
+  'visaCal':  CompanyTypes.visaCal,
+  'fibi':     CompanyTypes.pagi,     // Frontend sends 'fibi', maps to pagi in v6
 };
 
 // Chrome binary - try @sparticuz/chromium first
@@ -429,7 +428,7 @@ app.post('/scrape/pagi', async (req, res) => {
   const startTime = Date.now();
   try {
     console.log('[Pagi] Scraping for user ' + user.id);
-    const accounts = await scrapeProvider(CompanyTypes.fibi, credentials);
+    const accounts = await scrapeProvider(CompanyTypes.pagi, credentials);
     const { totalSaved, totalSkipped } = await saveTransactionsToSupabase(user.id, accounts, 'pagi');
 
     await getSupabase().from('open_banking_connections').upsert({
