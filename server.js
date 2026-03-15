@@ -350,6 +350,79 @@ app.post('/scrape', async (req, res) => {
   }
 });
 
+// Bank-specific scrape endpoints (Cal + Hapoalim)
+app.post('/scrape/hapoalim', async (req, res) => {
+  const user = await verifyAuthToken(req);
+  if (!user) return res.status(401).json({ error: 'Authentication failed' });
+
+  const { credentials } = req.body;
+  if (!credentials || !credentials.username || !credentials.password) {
+    return res.status(400).json({ error: 'Missing credentials (username, password)' });
+  }
+
+  const startTime = Date.now();
+  try {
+    console.log('[Hapoalim] Scraping for user ' + user.id);
+    const accounts = await scrapeProvider(CompanyTypes.hapoalim, credentials);
+    const { totalSaved, totalSkipped } = await saveTransactionsToSupabase(user.id, accounts, 'hapoalim');
+
+    await getSupabase().from('open_banking_connections').upsert({
+      user_id: user.id,
+      provider_name: 'Bank Hapoalim',
+      provider_code: 'hapoalim',
+      connection_status: 'active',
+      last_sync: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,provider_code' });
+
+    const duration = Date.now() - startTime;
+    await logSyncAttempt(user.id, 'hapoalim', 'success', null, totalSaved);
+    console.log('[Hapoalim] Done! Saved: ' + totalSaved + ', Skipped: ' + totalSkipped + ', Duration: ' + duration + 'ms');
+    res.json({ success: true, message: 'Hapoalim sync complete', transactionsAdded: totalSaved, totalSkipped, accountsCount: accounts.length, duration });
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    await logSyncAttempt(user.id, 'hapoalim', 'failed', error.message, 0);
+    console.error('[Hapoalim] Error after ' + duration + 'ms:', error.message);
+    res.status(500).json({ success: false, error: error.message || 'Scraping error', duration });
+  }
+});
+
+app.post('/scrape/cal', async (req, res) => {
+  const user = await verifyAuthToken(req);
+  if (!user) return res.status(401).json({ error: 'Authentication failed' });
+
+  const { credentials } = req.body;
+  if (!credentials || !credentials.username || !credentials.password) {
+    return res.status(400).json({ error: 'Missing credentials (username, password)' });
+  }
+
+  const startTime = Date.now();
+  try {
+    console.log('[Cal] Scraping for user ' + user.id);
+    const accounts = await scrapeProvider(CompanyTypes.cal, credentials);
+    const { totalSaved, totalSkipped } = await saveTransactionsToSupabase(user.id, accounts, 'cal');
+
+    await getSupabase().from('open_banking_connections').upsert({
+      user_id: user.id,
+      provider_name: 'Visa Cal',
+      provider_code: 'cal',
+      connection_status: 'active',
+      last_sync: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,provider_code' });
+
+    const duration = Date.now() - startTime;
+    await logSyncAttempt(user.id, 'cal', 'success', null, totalSaved);
+    console.log('[Cal] Done! Saved: ' + totalSaved + ', Skipped: ' + totalSkipped + ', Duration: ' + duration + 'ms');
+    res.json({ success: true, message: 'Cal sync complete', transactionsAdded: totalSaved, totalSkipped, accountsCount: accounts.length, duration });
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    await logSyncAttempt(user.id, 'cal', 'failed', error.message, 0);
+    console.error('[Cal] Error after ' + duration + 'ms:', error.message);
+    res.status(500).json({ success: false, error: error.message || 'Scraping error', duration });
+  }
+});
+
 // MyFinanda OTP Sessions - stores active browser instances waiting for OTP
 const myFinandaSessions = new Map(); // sessionId → { browser, page, userId, createdAt }
 
