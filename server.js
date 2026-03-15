@@ -117,7 +117,13 @@ async function scrapeProvider(providerType, credentials, attempt = 1) {
       headless: false,  // Explicitly disable headless mode
     });
 
-    const result = await scraper.scrape(credentials);
+    // Add hard timeout with Promise.race to prevent hanging
+    const TIMEOUT_MS = 180000; // 3 minutes
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Scraper timeout after ' + TIMEOUT_MS + 'ms')), TIMEOUT_MS);
+    });
+
+    const result = await Promise.race([scraper.scrape(credentials), timeoutPromise]);
     if (!result.success) {
       console.error('[Scraper] Error:', result.errorMessage);
       throw new Error(result.errorMessage || 'Scraping failed');
