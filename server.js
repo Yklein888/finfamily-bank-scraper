@@ -38,13 +38,13 @@ const PROVIDER_MAP = {
   'otsarHahayal': CompanyTypes.otsarHahayal,
   'union':        CompanyTypes.unionBank,
   'beinleumi':    CompanyTypes.beinleumi,
-    'fibi':         CompanyTypes.fibi,
-    'yahav':        CompanyTypes.yahav,
+  'fibi':         CompanyTypes.fibi,
+  'yahav':        CompanyTypes.yahav,
   'massad':       CompanyTypes.massad,
   'isracard':     CompanyTypes.isracard,
   'cal':          CompanyTypes.cal,
+  'visaCal':      CompanyTypes.visaCal,  // Both 'cal' and 'visaCal' work
   'max':          CompanyTypes.max,
-  'visaCal':      CompanyTypes.visaCal,
   'diners':       CompanyTypes.diners,
   'amex':         CompanyTypes.amex,
 };
