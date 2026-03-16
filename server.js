@@ -266,47 +266,40 @@ app.get('/providers', (req, res) => {
   });
 });
 
-// Debug endpoint: checks if a bank login page is accessible from this server
-app.get('/debug/page', async (req, res) => {
-  const url = req.query.url;
-  if (!url) return res.status(400).json({ error: 'Missing ?url= param' });
-
-  const execPath = await getChromePath();
-  if (!execPath) return res.status(500).json({ error: 'No Chrome binary available' });
-
-  const defaultArgs = chromium ? chromium.args : [
-    '--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu',
-    '--single-process', '--no-zygote'
+// Debug endpoint: checks if bank URLs are reachable via HTTP (no browser needed)
+app.get('/debug/reach', async (req, res) => {
+  const targets = [
+    { name: 'pagi-login',     url: 'https://online.pagi.co.il/MatafLoginService/MatafLoginServlet?bankId=PAGIPORTAL&site=Private&KODSAFA=HE' },
+    { name: 'pagi-home',      url: 'https://online.pagi.co.il/' },
+    { name: 'hapoalim-login', url: 'https://login.bankhapoalim.co.il/cgi-bin/poalwwwc?reqName=getLogonPage' },
+    { name: 'cal-login',      url: 'https://connect.cal-online.co.il/col-rest/calconnect/authentication/login' },
   ];
 
-  let browser;
-  try {
-    const puppeteer = (await import('puppeteer-core')).default;
-    browser = await puppeteer.launch({
-      headless: true,
-      executablePath: execPath,
-      args: [...defaultArgs, '--disable-dev-shm-usage'],
-    });
-    const page = await browser.newPage();
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-    const finalUrl = page.url();
-    const title = await page.title();
-    const selectors = {};
-    for (const sel of ['#username', '#password', '#continueBtn', '#card-header', '#userCode', '.login-btn', '#account_num']) {
-      selectors[sel] = (await page.$(sel)) !== null;
+  const results = await Promise.all(targets.map(async ({ name, url }) => {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10000);
+      const resp = await fetch(url, {
+        method: 'GET',
+        redirect: 'manual',
+        signal: ctrl.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' },
+      });
+      clearTimeout(timer);
+      const body = await resp.text().catch(() => '');
+      return {
+        name,
+        status: resp.status,
+        redirectedTo: resp.headers.get('location') || null,
+        bodySnippet: body.substring(0, 300),
+        accessible: resp.status < 500,
+      };
+    } catch (err) {
+      return { name, error: err.message, accessible: false };
     }
-    const bodyText = await page.evaluate(() => (document.body?.innerText || '').substring(0, 800));
+  }));
 
-    res.json({ finalUrl, title, selectors, bodyText });
-  } catch (err) {
-    res.json({ error: err.message, stage: 'navigation' });
-  } finally {
-    if (browser) {
-      try { await browser.close(); } catch (_) {}
-    }
-  }
+  res.json({ serverRegion: process.env.RENDER_REGION || 'unknown', results });
 });
 
 async function logSyncAttempt(userId, provider, status, errorMessage = null, transactionsAdded = 0) {
