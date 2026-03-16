@@ -62,31 +62,21 @@ async function scrapeProvider(providerType, credentials, attempt = 1) {
     '--single-process', '--no-zygote'
   ];
 
-  // Comprehensive anti-detection arguments for Israeli banks (especially Hapoalim)
+  // Anti-detection arguments - minimal and safe for Israeli bank websites
   const stealthArgs = [
     '--disable-blink-features=AutomationControlled',
-    '--disable-web-resources',
-    '--disable-default-apps',
-    '--disable-preconnect',
     '--disable-background-networking',
     '--disable-sync',
-    '--disable-plugins-power-saver',
     '--disable-breakpad',
     '--disable-extensions',
-    '--disable-features=VizDisplayCompositor',
-    '--disable-component-extensions-with-background-pages',
-    '--disable-default-apps',
     '--disable-hang-monitor',
     '--disable-notifications',
     '--disable-popup-blocking',
-    '--disable-prompt-on-repost',
-    '--disable-reading-from-canvas',
     '--no-first-run',
     '--no-default-browser-check',
     '--metrics-recording-only',
     '--disable-plugins',
-    '--disable-images',  // Don't load images - faster
-    'user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
   ];
 
   // Use a persistent user data directory for cookies
@@ -274,6 +264,49 @@ app.get('/providers', (req, res) => {
       { id: 'amex', name: 'Amex', type: 'credit' },
     ]
   });
+});
+
+// Debug endpoint: checks if a bank login page is accessible from this server
+app.get('/debug/page', async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).json({ error: 'Missing ?url= param' });
+
+  const execPath = await getChromePath();
+  if (!execPath) return res.status(500).json({ error: 'No Chrome binary available' });
+
+  const defaultArgs = chromium ? chromium.args : [
+    '--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu',
+    '--single-process', '--no-zygote'
+  ];
+
+  let browser;
+  try {
+    const puppeteer = (await import('puppeteer-core')).default;
+    browser = await puppeteer.launch({
+      headless: true,
+      executablePath: execPath,
+      args: [...defaultArgs, '--disable-dev-shm-usage'],
+    });
+    const page = await browser.newPage();
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+
+    const finalUrl = page.url();
+    const title = await page.title();
+    const selectors = {};
+    for (const sel of ['#username', '#password', '#continueBtn', '#card-header', '#userCode', '.login-btn', '#account_num']) {
+      selectors[sel] = (await page.$(sel)) !== null;
+    }
+    const bodyText = await page.evaluate(() => (document.body?.innerText || '').substring(0, 800));
+
+    res.json({ finalUrl, title, selectors, bodyText });
+  } catch (err) {
+    res.json({ error: err.message, stage: 'navigation' });
+  } finally {
+    if (browser) {
+      try { await browser.close(); } catch (_) {}
+    }
+  }
 });
 
 async function logSyncAttempt(userId, provider, status, errorMessage = null, transactionsAdded = 0) {
