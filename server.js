@@ -474,6 +474,44 @@ app.post('/scrape/pagi', async (req, res) => {
   }
 });
 
+// Debug endpoint - no JWT required - for testing scraper directly
+app.post('/debug/scrape-pagi', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Missing username or password' });
+  }
+
+  const startTime = Date.now();
+  try {
+    console.log('[Debug] Testing Pagi scraper directly (no JWT)');
+    const credentials = { username, password };
+    const accounts = await scrapeProvider(CompanyTypes.pagi, credentials);
+
+    const duration = Date.now() - startTime;
+    console.log('[Debug] Scrape successful: ' + accounts.length + ' accounts found in ' + duration + 'ms');
+
+    res.json({
+      success: true,
+      message: 'Pagi scrape successful (debug)',
+      accountsCount: accounts.length,
+      accounts: accounts.map(a => ({
+        accountNumber: a.accountNumber,
+        balance: a.balance,
+        txnCount: (a.txns || []).length
+      })),
+      duration
+    });
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    console.error('[Debug] Scrape error after ' + duration + 'ms:', error.message);
+    console.error('[Debug] Full error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Scraping error',
+      duration
+    });
+  }
+});
 
 app.post('/sync-all', async (req, res) => {
   const { adminKey } = req.body;
