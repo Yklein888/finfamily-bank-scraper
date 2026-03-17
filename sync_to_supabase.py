@@ -126,3 +126,35 @@ def push_to_supabase(
         raise RuntimeError(f"bank-push failed ({response.status_code}): {result}")
 
     return result
+
+
+if __name__ == "__main__":
+    """
+    Run this directly to sync Pagi bank data:
+        python sync_to_supabase.py
+    """
+    import subprocess
+    import sys
+
+    print("=" * 60)
+    print("FinFamily Bank Sync - Local Scraper")
+    print("=" * 60)
+    print()
+
+    # For now, just show instructions
+    print("שרת Render free tier איטי מדי לChrome.")
+    print("אתה יכול להריץ את הסקרייפר locally מהמחשב שלך:")
+    print()
+    print("פעולות:")
+    print("1. בתיקיית pagi-api / cal-api / hapoalim-api - הרץ את scraper.py שלהם")
+    print("2. זה יקרא את התנועות מהבנק")
+    print("3. זה ישלח לsync_to_supabase.py כדי לדחוף ל-Supabase")
+    print("4. כל ה-devices שלך יראו את התנועות תוך שניה")
+    print()
+    print("דוגמה:")
+    print("  from sync_to_supabase import push_to_supabase")
+    print("  push_to_supabase('pagi', transactions, balance=current_balance)")
+    print()
+    print("שאלות? בדוק את ה-Notion:")
+    print("  https://www.notion.so/324675d8cffd815c82d5c6302c025f30")
+    print()
