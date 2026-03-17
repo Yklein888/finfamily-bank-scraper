@@ -1,0 +1,57 @@
+name: FinFamily Auto Scraper
+
+on:
+  schedule:
+    # כל 6 שעות
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # אפשר גם להריץ ידנית
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run Pagi scraper
+        env:
+          SUPABASE_URL: https://tzhhilhiheekhcpdexdc.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
+          PAGI_USERNAME: ${{ secrets.PAGI_USERNAME }}
+          PAGI_PASSWORD: ${{ secrets.PAGI_PASSWORD }}
+        run: node scripts/scrape-pagi.js
+
+      - name: Run Cal scraper
+        if: always()
+        env:
+          SUPABASE_URL: https://tzhhilhiheekhcpdexdc.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
+          CAL_USERNAME: ${{ secrets.CAL_USERNAME }}
+          CAL_PASSWORD: ${{ secrets.CAL_PASSWORD }}
+        run: node scripts/scrape-cal.js
+
+      - name: Run Hapoalim scraper
+        if: always()
+        env:
+          SUPABASE_URL: https://tzhhilhiheekhcpdexdc.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
+          HAPOALIM_USERNAME: ${{ secrets.HAPOALIM_USERNAME }}
+          HAPOALIM_PASSWORD: ${{ secrets.HAPOALIM_PASSWORD }}
+        run: node scripts/scrape-hapoalim.js
+
+      - name: Log completion
+        if: always()
+        run: |
+          echo "✅ Scrape cycle completed at $(date)"
