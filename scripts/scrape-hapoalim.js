@@ -14,6 +14,14 @@ async function scrapeAndPush() {
   const userCode = process.env.HAPOALIM_USERCODE;
   const password = process.env.HAPOALIM_PASSWORD;
 
+  console.log('[Hapoalim] ENV check:', {
+    userCode: userCode ? '✓' : '✗ MISSING',
+    password: password ? '✓' : '✗ MISSING',
+    scraperKey: SCRAPER_API_KEY ? '✓' : '✗ MISSING',
+    supabaseUrl: process.env.SUPABASE_URL ? '✓' : '✗ MISSING',
+    supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? '✓' : '✗ MISSING'
+  });
+
   if (!userCode || !password) {
     console.log('[Hapoalim] ⏭️ Skipping - no credentials in secrets');
     return;

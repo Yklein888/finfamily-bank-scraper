@@ -14,6 +14,14 @@ async function scrapeAndPush() {
   const username = process.env.CAL_USERNAME;
   const password = process.env.CAL_PASSWORD;
 
+  console.log('[Cal] ENV check:', {
+    username: username ? '✓' : '✗ MISSING',
+    password: password ? '✓' : '✗ MISSING',
+    scraperKey: SCRAPER_API_KEY ? '✓' : '✗ MISSING',
+    supabaseUrl: process.env.SUPABASE_URL ? '✓' : '✗ MISSING',
+    supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? '✓' : '✗ MISSING'
+  });
+
   if (!username || !password) {
     console.log('[Cal] ⏭️ Skipping - no credentials in secrets');
     return;

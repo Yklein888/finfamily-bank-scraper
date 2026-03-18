@@ -14,6 +14,14 @@ async function scrapeAndPush() {
   const username = process.env.PAGI_USERNAME;
   const password = process.env.PAGI_PASSWORD;
 
+  console.log('[Pagi] ENV check:', {
+    username: username ? '✓' : '✗ MISSING',
+    password: password ? '✓' : '✗ MISSING',
+    scraperKey: SCRAPER_API_KEY ? '✓' : '✗ MISSING',
+    supabaseUrl: process.env.SUPABASE_URL ? '✓' : '✗ MISSING',
+    supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? '✓' : '✗ MISSING'
+  });
+
   if (!username || !password) {
     throw new Error('Missing PAGI_USERNAME or PAGI_PASSWORD in GitHub secrets');
   }
