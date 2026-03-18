@@ -63,7 +63,7 @@ async function scrapeAndPush() {
       const payload = {
         source: 'hapoalim',
         user_id: USER_ID,
-        account_id: null, // Will be auto-detected by Edge Function
+        account_id: account.accountNumber || 'auto', // Edge Function requires non-null value
         balance: account.balance,
         transactions: account.txns || [],
         fetched_at: new Date().toISOString(),
