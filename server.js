@@ -489,6 +489,35 @@ app.post('/scrape/pagi', async (req, res) => {
   }
 });
 
+// Alias endpoint for FinFamily frontend (/myfinanda calls scrape/pagi)
+app.post('/myfinanda', async (req, res) => {
+  // Proxy request to /scrape/pagi with same body
+  const user = await verifyAuthToken(req);
+  if (!user) return res.status(401).json({ error: 'Authentication failed' });
+
+  const { credentials } = req.body;
+  if (!credentials || !credentials.username || !credentials.password) {
+    return res.status(400).json({ error: 'Missing credentials (username, password)' });
+  }
+
+  const startTime = Date.now();
+  try {
+    console.log('[MyFinanda] Scraping for user ' + user.id);
+    const accounts = await scrapeProvider(CompanyTypes.pagi, credentials);
+    const { totalSaved, totalSkipped } = await saveTransactionsToSupabase(user.id, accounts, 'pagi');
+
+    const duration = Date.now() - startTime;
+    await logSyncAttempt(user.id, 'pagi', 'success', null, totalSaved);
+    console.log('[MyFinanda] Done! Saved: ' + totalSaved + ', Skipped: ' + totalSkipped + ', Duration: ' + duration + 'ms');
+    res.json({ success: true, accounts, totalSaved, totalSkipped, duration });
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    await logSyncAttempt(user.id, 'pagi', 'failed', error.message, 0);
+    console.error('[MyFinanda] Error after ' + duration + 'ms:', error.message);
+    res.status(500).json({ success: false, error: error.message || 'Scraping error', duration });
+  }
+});
+
 // Debug endpoint - no JWT required - for testing scraper directly
 app.post('/debug/scrape-pagi', async (req, res) => {
   const { username, password } = req.body;
