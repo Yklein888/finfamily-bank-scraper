@@ -11,10 +11,10 @@ const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY;
 const USER_ID = '16274024-a305-4416-ba62-9b321669d7d6'; // yklein89@gmail.com
 
 async function scrapeAndPush() {
-  const username = process.env.HAPOALIM_USERNAME;
+  const userCode = process.env.HAPOALIM_USERCODE;
   const password = process.env.HAPOALIM_PASSWORD;
 
-  if (!username || !password) {
+  if (!userCode || !password) {
     console.log('[Hapoalim] ⏭️ Skipping - no credentials in secrets');
     return;
   }
@@ -43,8 +43,8 @@ async function scrapeAndPush() {
 
     const scraper = createScraper(scraperOptions);
 
-    console.log('[Hapoalim] Logging in...');
-    const result = await scraper.scrape({ username, password });
+    console.log('[Hapoalim] Logging in with userCode...');
+    const result = await scraper.scrape({ userCode, password });
 
     if (!result.success) {
       throw new Error('Scraper failed: ' + (result.errorMessage || 'unknown error'));
@@ -56,7 +56,7 @@ async function scrapeAndPush() {
       throw new Error('No accounts returned from scraper');
     }
 
-    console.log('[Hapoalim] ✅ Scraped ' + accounts.length + ' account(s)');
+    console.log(`[Hapoalim] ✅ Scraped ${accounts.length} account(s)`);
 
     // Push to Supabase via bank-push Edge Function
     for (const account of accounts) {
@@ -77,7 +77,7 @@ async function scrapeAndPush() {
         timeout: 30000,
       });
 
-      console.log('[Hapoalim] Push response:', res.data);
+      console.log(`[Hapoalim] Push response:`, res.data);
     }
 
     console.log('[Hapoalim] ✅ Sync complete');
