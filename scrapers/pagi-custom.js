@@ -5,7 +5,6 @@
  */
 
 import puppeteer from 'puppeteer-core';
-import { parse } from 'date-fns';
 
 const PAGI_LOGIN_URL = 'https://online.pagi.co.il/MatafLoginService/MatafLoginServlet?bankId=PAGIPORTAL&site=Private&KODSAFA=HE';
 const PAGI_HOME_URL = 'https://online.pagi.co.il/';
