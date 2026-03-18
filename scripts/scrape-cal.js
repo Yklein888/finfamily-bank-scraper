@@ -24,25 +24,39 @@ async function scrapeAndPush() {
   }
 
   console.log('[Cal] Starting scrape at', new Date().toISOString());
+  console.log('[Cal] Chrome path:', process.env.PUPPETEER_EXECUTABLE_PATH || 'not set (will auto-detect)');
 
   try {
-    const scraper = createScraper({
+    const scraperOptions = {
       companyId: CompanyTypes.visaCal,
       startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
       combineInstallments: false,
       showBrowser: false,
       headless: true,
       timeout: 60000,
-    });
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    };
+
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      scraperOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
+    const scraper = createScraper(scraperOptions);
 
     console.log('[Cal] Logging in...');
-    const accounts = await scraper.scrape({ username, password });
+    const result = await scraper.scrape({ username, password });
+
+    if (!result.success) {
+      throw new Error('Scraper failed: ' + (result.errorMessage || 'unknown error'));
+    }
+
+    const accounts = result.accounts;
 
     if (!accounts || accounts.length === 0) {
       throw new Error('No accounts returned from scraper');
     }
 
-    console.log(`[Cal] ✅ Scraped ${accounts.length} account(s)`);
+    console.log('[Cal] ✅ Scraped ' + accounts.length + ' account(s)');
 
     // Push to Supabase via bank-push Edge Function
     for (const account of accounts) {
@@ -63,7 +77,7 @@ async function scrapeAndPush() {
         timeout: 30000,
       });
 
-      console.log(`[Cal] Push response:`, res.data);
+      console.log('[Cal] Push response:', res.data);
     }
 
     console.log('[Cal] ✅ Sync complete');
