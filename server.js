@@ -557,6 +557,121 @@ app.post('/debug/scrape-pagi', async (req, res) => {
   }
 });
 
+// Sync all banks for authenticated user (Pagi + Cal + Hapoalim)
+app.post('/sync-all-banks', async (req, res) => {
+  const user = await verifyAuthToken(req);
+  if (!user) return res.status(401).json({ error: 'Authentication failed' });
+
+  const { userId } = req.body;
+  if (!userId || userId !== user.id) {
+    return res.status(401).json({ error: 'User ID mismatch or missing' });
+  }
+
+  const startTime = Date.now();
+  const results = [];
+
+  try {
+    // Get all active connections for this user
+    const { data: connections } = await getSupabase()
+      .from('open_banking_connections')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('connection_status', 'active');
+
+    console.log('[SYNC-ALL-BANKS] Starting sync for user ' + user.id + ' with ' + (connections?.length || 0) + ' active connections');
+
+    // Sync each connected bank
+    for (const conn of (connections || [])) {
+      const connStartTime = Date.now();
+      const provider = conn.provider_code;
+
+      try {
+        let credentials = {};
+        let providerType;
+
+        // Get credentials from environment variables based on provider
+        if (provider === 'pagi') {
+          const username = process.env.PAGI_USERNAME;
+          const password = process.env.PAGI_PASSWORD;
+          if (!username || !password) {
+            throw new Error('Missing PAGI credentials in environment');
+          }
+          credentials = { username, password };
+          providerType = CompanyTypes.pagi;
+        } else if (provider === 'cal' || provider === 'visaCal') {
+          const username = process.env.CAL_USERNAME;
+          const password = process.env.CAL_PASSWORD;
+          if (!username || !password) {
+            throw new Error('Missing CAL credentials in environment');
+          }
+          credentials = { username, password };
+          providerType = CompanyTypes.visaCal;
+        } else if (provider === 'hapoalim') {
+          const username = process.env.HAPOALIM_USERNAME;
+          const password = process.env.HAPOALIM_PASSWORD;
+          if (!username || !password) {
+            throw new Error('Missing Hapoalim credentials in environment');
+          }
+          credentials = { username, password };
+          providerType = CompanyTypes.hapoalim;
+        } else {
+          throw new Error('Unsupported provider: ' + provider);
+        }
+
+        // Scrape the bank
+        console.log('[SYNC-ALL-BANKS] Scraping ' + provider + ' for user ' + user.id);
+        const accounts = await scrapeProvider(providerType, credentials);
+        const stats = await saveTransactionsToSupabase(user.id, accounts, provider);
+
+        // Update connection status
+        await getSupabase().from('open_banking_connections').update({
+          connection_status: 'active',
+          last_sync: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq('user_id', user.id).eq('provider_code', provider);
+
+        const duration = Date.now() - connStartTime;
+        await logSyncAttempt(user.id, provider, 'success', null, stats.totalSaved);
+        results.push({
+          provider,
+          success: true,
+          transactionsAdded: stats.totalSaved,
+          transactionsSkipped: stats.totalSkipped,
+          accountsCount: accounts.length,
+          duration,
+        });
+        console.log('[SYNC-ALL-BANKS] ✓ ' + provider + ' synced (' + stats.totalSaved + ' transactions, ' + duration + 'ms)');
+      } catch (err) {
+        const duration = Date.now() - connStartTime;
+        await logSyncAttempt(user.id, provider, 'failed', err.message, 0);
+        results.push({
+          provider,
+          success: false,
+          error: err.message,
+          duration,
+        });
+        console.error('[SYNC-ALL-BANKS] ✗ ' + provider + ' failed (' + duration + 'ms):', err.message);
+      }
+    }
+
+    const totalDuration = Date.now() - startTime;
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+    console.log('[SYNC-ALL-BANKS] Complete! Succeeded: ' + succeeded + ', Failed: ' + failed + ', Total duration: ' + totalDuration + 'ms');
+
+    res.json({
+      success: true,
+      results,
+      totalDuration,
+      summary: { succeeded, failed },
+    });
+  } catch (error) {
+    const totalDuration = Date.now() - startTime;
+    console.error('[SYNC-ALL-BANKS] Fatal error after ' + totalDuration + 'ms:', error.message);
+    res.status(500).json({ success: false, error: error.message || 'Sync failed', totalDuration });
+  }
+});
+
 app.post('/sync-all', async (req, res) => {
   const { adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_KEY) return res.status(401).json({ error: 'Unauthorized' });
