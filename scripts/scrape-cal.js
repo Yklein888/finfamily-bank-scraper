@@ -56,7 +56,7 @@ async function scrapeAndPush() {
       throw new Error('No accounts returned from scraper');
     }
 
-    console.log('[Cal] ✅ Scraped ' + accounts.length + ' account(s)');
+    console.log(`[Cal] ✅ Scraped ${accounts.length} account(s)`);
 
     // Push to Supabase via bank-push Edge Function
     for (const account of accounts) {
@@ -77,7 +77,7 @@ async function scrapeAndPush() {
         timeout: 30000,
       });
 
-      console.log('[Cal] Push response:', res.data);
+      console.log(`[Cal] Push response:`, res.data);
     }
 
     console.log('[Cal] ✅ Sync complete');
