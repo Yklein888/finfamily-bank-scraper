@@ -4,6 +4,7 @@ import cors from 'cors';
 import cron from 'node-cron';
 import { createClient } from '@supabase/supabase-js';
 import { CompanyTypes, createScraper } from 'israeli-bank-scrapers';
+import { scrapePagi } from './scrapers/pagi-custom.js';
 
 dotenv.config();
 
@@ -85,6 +86,20 @@ async function scrapeProvider(providerType, credentials, attempt = 1) {
 
   try {
     console.log('[Scraper] Starting with settings: headless=true, showBrowser=false, timeout=180s');
+
+    // Use custom Pagi scraper instead of library's broken one
+    if (providerType === CompanyTypes.pagi) {
+      console.log('[Scraper] Using custom Pagi scraper (library selectors are outdated)');
+      const args = [
+        ...defaultArgs,
+        '--disable-dev-shm-usage',
+        ...stealthArgs,
+        ...userDataArgs,
+      ];
+      const accounts = await scrapePagi(credentials, execPath, args);
+      console.log('[Scraper] Custom Pagi scraper succeeded! Found ' + accounts.length + ' accounts');
+      return accounts;
+    }
 
     const scraper = createScraper({
       companyId: providerType,
