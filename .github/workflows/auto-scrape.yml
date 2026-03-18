@@ -9,7 +9,7 @@ on:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4
@@ -60,7 +60,7 @@ jobs:
           SUPABASE_URL: https://tzhhilhiheekhcpdexdc.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
-          HAPOALIM_USERNAME: ${{ secrets.HAPOALIM_USERNAME }}
+          HAPOALIM_USERCODE: ${{ secrets.HAPOALIM_USERCODE }}
           HAPOALIM_PASSWORD: ${{ secrets.HAPOALIM_PASSWORD }}
           PUPPETEER_EXECUTABLE_PATH: ${{ env.PUPPETEER_EXECUTABLE_PATH }}
         run: node scripts/scrape-hapoalim.js
