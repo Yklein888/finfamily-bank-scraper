@@ -1,0 +1,38 @@
+name: Hourly Bank Scraper
+
+on:
+  # Run every hour at the start of the hour
+  schedule:
+    - cron: '0 * * * *'
+  # Allow manual triggering from GitHub UI
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run bank scraper
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PAGI_USERNAME: ${{ secrets.PAGI_USERNAME }}
+          PAGI_PASSWORD: ${{ secrets.PAGI_PASSWORD }}
+        run: node scrape-cli.js
+
+      - name: Notify on failure
+        if: failure()
+        run: echo "Bank scraper failed - check logs above"
