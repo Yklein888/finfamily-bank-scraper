@@ -24,25 +24,39 @@ async function scrapeAndPush() {
   }
 
   console.log('[Hapoalim] Starting scrape at', new Date().toISOString());
+  console.log('[Hapoalim] Chrome path:', process.env.PUPPETEER_EXECUTABLE_PATH || 'not set (will auto-detect)');
 
   try {
-    const scraper = createScraper({
+    const scraperOptions = {
       companyId: CompanyTypes.hapoalim,
       startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
       combineInstallments: false,
       showBrowser: false,
       headless: true,
       timeout: 60000,
-    });
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    };
+
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+      scraperOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+
+    const scraper = createScraper(scraperOptions);
 
     console.log('[Hapoalim] Logging in...');
-    const accounts = await scraper.scrape({ username, password });
+    const result = await scraper.scrape({ username, password });
+
+    if (!result.success) {
+      throw new Error('Scraper failed: ' + (result.errorMessage || 'unknown error'));
+    }
+
+    const accounts = result.accounts;
 
     if (!accounts || accounts.length === 0) {
       throw new Error('No accounts returned from scraper');
     }
 
-    console.log(`[Hapoalim] ✅ Scraped ${accounts.length} account(s)`);
+    console.log('[Hapoalim] ✅ Scraped ' + accounts.length + ' account(s)');
 
     // Push to Supabase via bank-push Edge Function
     for (const account of accounts) {
@@ -63,7 +77,7 @@ async function scrapeAndPush() {
         timeout: 30000,
       });
 
-      console.log(`[Hapoalim] Push response:`, res.data);
+      console.log('[Hapoalim] Push response:', res.data);
     }
 
     console.log('[Hapoalim] ✅ Sync complete');
