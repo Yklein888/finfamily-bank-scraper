@@ -23,6 +23,7 @@ jobs:
         run: npm install
 
       - name: Find Chrome and set path
+        id: chrome
         run: |
           CHROME=$(which google-chrome-stable 2>/dev/null || which google-chrome 2>/dev/null || which chromium-browser 2>/dev/null || which chromium 2>/dev/null || echo "")
           if [ -z "$CHROME" ]; then
@@ -31,7 +32,7 @@ jobs:
             CHROME=$(which chromium-browser)
           fi
           echo "Using Chrome: $CHROME"
-          echo "PUPPETEER_EXECUTABLE_PATH=$CHROME" >> $GITHUB_ENV
+          echo "CHROME_PATH=$CHROME" >> $GITHUB_OUTPUT
 
       - name: Run Pagi scraper
         env:
@@ -40,7 +41,7 @@ jobs:
           SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
           PAGI_USERNAME: ${{ secrets.PAGI_USERNAME }}
           PAGI_PASSWORD: ${{ secrets.PAGI_PASSWORD }}
-          PUPPETEER_EXECUTABLE_PATH: ${{ env.PUPPETEER_EXECUTABLE_PATH }}
+          PUPPETEER_EXECUTABLE_PATH: ${{ steps.chrome.outputs.CHROME_PATH }}
         run: node scripts/scrape-pagi.js
 
       - name: Run Cal scraper
@@ -51,7 +52,7 @@ jobs:
           SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
           CAL_USERNAME: ${{ secrets.CAL_USERNAME }}
           CAL_PASSWORD: ${{ secrets.CAL_PASSWORD }}
-          PUPPETEER_EXECUTABLE_PATH: ${{ env.PUPPETEER_EXECUTABLE_PATH }}
+          PUPPETEER_EXECUTABLE_PATH: ${{ steps.chrome.outputs.CHROME_PATH }}
         run: node scripts/scrape-cal.js
 
       - name: Run Hapoalim scraper
@@ -62,7 +63,7 @@ jobs:
           SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
           HAPOALIM_USERCODE: ${{ secrets.HAPOALIM_USERCODE }}
           HAPOALIM_PASSWORD: ${{ secrets.HAPOALIM_PASSWORD }}
-          PUPPETEER_EXECUTABLE_PATH: ${{ env.PUPPETEER_EXECUTABLE_PATH }}
+          PUPPETEER_EXECUTABLE_PATH: ${{ steps.chrome.outputs.CHROME_PATH }}
         run: node scripts/scrape-hapoalim.js
 
       - name: Log completion
