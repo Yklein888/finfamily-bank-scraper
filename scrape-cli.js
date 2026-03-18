@@ -247,33 +247,52 @@ async function runAutoSync() {
       try {
         console.log(`[Sync] Starting ${provider} sync for user ${userId.substring(0, 8)}...`);
 
-        // Get credentials from environment - for Pagi only
+        let credentials;
+        let companyType;
+
+        // Get credentials based on provider
         if (provider === 'pagi') {
           const username = process.env.PAGI_USERNAME;
           const password = process.env.PAGI_PASSWORD;
-
           if (!username || !password) {
             throw new Error('Missing PAGI_USERNAME or PAGI_PASSWORD environment variables');
           }
-
-          const credentials = { username, password };
-          const accounts = await scrapeProvider(CompanyTypes.pagi, credentials);
-          const stats = await saveTransactionsToSupabase(userId, accounts, provider);
-
-          // Update connection status
-          await getSupabase().from('open_banking_connections').update({
-            connection_status: 'active',
-            last_sync: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }).eq('user_id', userId).eq('provider_code', provider);
-
-          const duration = Date.now() - connStartTime;
-          await logSyncAttempt(userId, provider, 'success', null, stats.totalSaved);
-          console.log(`[Sync] ✓ ${provider} synced (${stats.totalSaved} transactions, ${duration}ms)`);
-          totalSucceeded++;
+          credentials = { username, password };
+          companyType = CompanyTypes.pagi;
+        } else if (provider === 'cal') {
+          const username = process.env.CAL_USERNAME;
+          const password = process.env.CAL_PASSWORD;
+          if (!username || !password) {
+            throw new Error('Missing CAL_USERNAME or CAL_PASSWORD environment variables');
+          }
+          credentials = { username, password };
+          companyType = CompanyTypes.visaCal;
+        } else if (provider === 'hapoalim') {
+          const username = process.env.HAPOALIM_USERNAME;
+          const password = process.env.HAPOALIM_PASSWORD;
+          if (!username || !password) {
+            throw new Error('Missing HAPOALIM_USERNAME or HAPOALIM_PASSWORD environment variables');
+          }
+          credentials = { username, password };
+          companyType = CompanyTypes.hapoalim;
         } else {
-          console.log(`[Sync] ⚠ Skipping ${provider} - CLI mode only supports Pagi`);
+          throw new Error(`Unknown provider: ${provider}`);
         }
+
+        const accounts = await scrapeProvider(companyType, credentials);
+        const stats = await saveTransactionsToSupabase(userId, accounts, provider);
+
+        // Update connection status
+        await getSupabase().from('open_banking_connections').update({
+          connection_status: 'active',
+          last_sync: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq('user_id', userId).eq('provider_code', provider);
+
+        const duration = Date.now() - connStartTime;
+        await logSyncAttempt(userId, provider, 'success', null, stats.totalSaved);
+        console.log(`[Sync] ✓ ${provider} synced (${stats.totalSaved} transactions, ${duration}ms)`);
+        totalSucceeded++;
       } catch (err) {
         const duration = Date.now() - connStartTime;
         console.error(`[Sync] ✗ ${provider} failed (${duration}ms):`, err.message);
