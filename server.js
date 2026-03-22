@@ -263,33 +263,20 @@ async function initializeDatabase() {
   try {
     const sb = getSupabase();
 
-    // Create bank_connections table if it doesn't exist
-    const { error } = await sb.rpc('exec_sql', {
-      query: `
-        CREATE TABLE IF NOT EXISTS bank_connections (
-          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-          user_id UUID NOT NULL,
-          provider TEXT NOT NULL,
-          encrypted_credentials TEXT NOT NULL,
-          auto_sync BOOLEAN DEFAULT false,
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-          updated_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-          UNIQUE(user_id, provider)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_bank_connections_auto_sync ON bank_connections(auto_sync);
-        CREATE INDEX IF NOT EXISTS idx_bank_connections_user_id ON bank_connections(user_id);
-      `
-    });
+    // Verify bank_connections table exists by trying to query it
+    const { count, error } = await sb
+      .from('bank_connections')
+      .select('*', { count: 'exact', head: true });
 
     if (error) {
-      // Table might already exist, which is fine
-      console.log('[Init] Database initialization note:', error.message);
+      console.error('[Init] ⚠️  bank_connections table not found. Create it in Supabase with:');
+      console.error('[Init] See migrations/001_create_bank_connections.sql');
+      console.error('[Init] Error:', error.message);
     } else {
-      console.log('[Init] Database tables verified/created successfully');
+      console.log('[Init] ✓ bank_connections table ready');
     }
   } catch (err) {
-    console.log('[Init] Database initialization skipped:', err.message);
+    console.error('[Init] Database verification error:', err.message);
   }
 }
 
