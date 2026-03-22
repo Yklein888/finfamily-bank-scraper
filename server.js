@@ -343,6 +343,49 @@ async function logSyncAttempt(userId, provider, status, errorMessage = null, tra
   }
 }
 
+// Save bank credentials for auto-sync
+app.post('/add-bank-connection', async (req, res) => {
+  const user = await verifyAuthToken(req);
+  if (!user) return res.status(401).json({ error: 'Authentication failed' });
+
+  const { provider, credentials, auto_sync } = req.body;
+  if (!provider || !credentials) return res.status(400).json({ error: 'Missing provider or credentials' });
+
+  const providerType = PROVIDER_MAP[provider];
+  if (!providerType) return res.status(400).json({ error: 'Unsupported provider: ' + provider });
+
+  try {
+    // Encrypt credentials (base64 like the scraper does)
+    const encryptedCreds = Buffer.from(JSON.stringify(credentials)).toString('base64');
+
+    // Save to bank_connections table for auto-sync
+    const { data, error } = await getSupabase().from('bank_connections').upsert({
+      user_id: user.id,
+      provider: provider,
+      encrypted_credentials: encryptedCreds,
+      auto_sync: auto_sync !== false, // default to true
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,provider' });
+
+    if (error) {
+      console.error('[ADD-BANK-CONNECTION] Upsert error:', error);
+      return res.status(500).json({ success: false, error: error.message });
+    }
+
+    console.log('[ADD-BANK-CONNECTION] Saved ' + provider + ' credentials for user ' + user.id + ' with auto_sync=' + (auto_sync !== false));
+    res.json({
+      success: true,
+      message: 'Bank connection saved for auto-sync',
+      provider,
+      auto_sync: auto_sync !== false
+    });
+  } catch (error) {
+    console.error('[ADD-BANK-CONNECTION] Error:', error.message);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.post('/scrape', async (req, res) => {
   const user = await verifyAuthToken(req);
   if (!user) return res.status(401).json({ error: 'Authentication failed' });
