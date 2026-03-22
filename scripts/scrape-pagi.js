@@ -30,10 +30,15 @@ async function scrapeAndPush() {
   console.log("[Pagi] Accounts:", accounts ? accounts.length : 0);
   if (!accounts || accounts.length === 0) throw new Error("No accounts returned");
   for (const account of accounts) {
-    console.log("[Pagi] Account", account.accountNumber, "| txns:", account.txns ? account.txns.length : 0);
+    const txCount = account.txns ? account.txns.length : 0;
+    console.log("[Pagi] Account", account.accountNumber, "| txns:", txCount);
     const payload = { source: "pagi", user_id: USER_ID, account_id: account.accountNumber || "auto", balance: account.balance, transactions: account.txns || [], fetched_at: new Date().toISOString() };
-    const res = await axios.post(SUPABASE_PUSH_URL, payload, { headers: { "x-scraper-api-key": SCRAPER_API_KEY, "Content-Type": "application/json" }, timeout: 30000 });
-    console.log("[Pagi] Push:", JSON.stringify(res.data));
+    console.log("[Pagi] Pushing to Supabase...");
+    const res = await axios.post(SUPABASE_PUSH_URL, payload, {
+      headers: { "x-scraper-api-key": SCRAPER_API_KEY, "Content-Type": "application/json" },
+      timeout: 180000,
+    });
+    console.log("[Pagi] Push result:", JSON.stringify(res.data));
   }
   console.log("[Pagi] Done");
 }
