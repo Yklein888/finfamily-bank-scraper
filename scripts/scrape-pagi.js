@@ -1,14 +1,15 @@
 /**
  * GitHub Actions scraper for Pagi bank
- * Runs every 6 hours, pushes to Supabase via bank-push Edge Function
+ * Uses @sparticuz/chromium for serverless-compatible Chrome
  */
 
+import chromium from '@sparticuz/chromium';
 import { createScraper, CompanyTypes } from 'israeli-bank-scrapers';
 import axios from 'axios';
 
 const SUPABASE_PUSH_URL = 'https://tzhhilhiheekhcpdexdc.supabase.co/functions/v1/bank-push';
 const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY;
-const USER_ID = '16274024-a305-4416-ba62-9b321669d7d6'; // yklein89@gmail.com
+const USER_ID = '16274024-a305-4416-ba62-9b321669d7d6';
 
 async function scrapeAndPush() {
   const username = process.env.PAGI_USERNAME;
@@ -22,16 +23,14 @@ async function scrapeAndPush() {
     supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? '✓' : '✗ MISSING'
   });
 
-  if (!username || !password) {
-    throw new Error('Missing PAGI_USERNAME or PAGI_PASSWORD in GitHub secrets');
-  }
-
-  if (!SCRAPER_API_KEY) {
-    throw new Error('Missing SCRAPER_API_KEY in GitHub secrets');
-  }
+  if (!username || !password) throw new Error('Missing PAGI_USERNAME or PAGI_PASSWORD');
+  if (!SCRAPER_API_KEY) throw new Error('Missing SCRAPER_API_KEY');
 
   console.log('[Pagi] Starting scrape at', new Date().toISOString());
-  console.log('[Pagi] Chrome path:', process.env.PUPPETEER_EXECUTABLE_PATH || 'not set (will auto-detect)');
+
+  // Use @sparticuz/chromium for serverless-compatible binary
+  const executablePath = await chromium.executablePath();
+  console.log('[Pagi] Chrome path:', executablePath);
 
   try {
     const scraperOptions = {
@@ -39,14 +38,11 @@ async function scrapeAndPush() {
       startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
       combineInstallments: false,
       showBrowser: false,
-      headless: true,
+      headless: chromium.headless,
+      executablePath,
+      args: chromium.args,
       timeout: 60000,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     };
-
-    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
-      scraperOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
-    }
 
     const scraper = createScraper(scraperOptions);
 
@@ -58,23 +54,21 @@ async function scrapeAndPush() {
     }
 
     const accounts = result.accounts;
-
-    if (!accounts || accounts.length === 0) {
-      throw new Error('No accounts returned from scraper');
-    }
+    if (!accounts || accounts.length === 0) throw new Error('No accounts returned');
 
     console.log(`[Pagi] ✅ Scraped ${accounts.length} account(s)`);
 
-    // Push to Supabase via bank-push Edge Function
     for (const account of accounts) {
       const payload = {
         source: 'pagi',
         user_id: USER_ID,
-        account_id: account.accountNumber || 'auto', // Edge Function requires non-null value
+        account_id: account.accountNumber || 'auto',
         balance: account.balance,
         transactions: account.txns || [],
         fetched_at: new Date().toISOString(),
       };
+
+      console.log(`[Pagi] Pushing ${payload.transactions.length} transactions...`);
 
       const res = await axios.post(SUPABASE_PUSH_URL, payload, {
         headers: {
@@ -84,7 +78,7 @@ async function scrapeAndPush() {
         timeout: 30000,
       });
 
-      console.log(`[Pagi] Push response:`, res.data);
+      console.log('[Pagi] Push response:', res.data);
     }
 
     console.log('[Pagi] ✅ Sync complete');
