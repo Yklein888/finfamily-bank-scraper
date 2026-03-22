@@ -377,8 +377,8 @@ app.post('/add-bank-connection', async (req, res) => {
     });
 
     if (error) {
-      console.error('[ADD-BANK-CONNECTION] Upsert error:', error);
-      return res.status(500).json({ success: false, error: error.message });
+      console.error('[ADD-BANK-CONNECTION] Insert error:', JSON.stringify(error));
+      return res.status(500).json({ success: false, error: error.message, details: error });
     }
 
     console.log('[ADD-BANK-CONNECTION] Saved ' + provider + ' credentials for user ' + user_id + ' with auto_sync=' + (auto_sync !== false));
@@ -390,8 +390,8 @@ app.post('/add-bank-connection', async (req, res) => {
       user_id
     });
   } catch (error) {
-    console.error('[ADD-BANK-CONNECTION] Error:', error.message);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('[ADD-BANK-CONNECTION] Error:', error.message, error.stack);
+    res.status(500).json({ success: false, error: error.message, stack: error.stack });
   }
 });
 
