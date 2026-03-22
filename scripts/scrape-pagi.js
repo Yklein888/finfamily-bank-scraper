@@ -1,15 +1,38 @@
 /**
  * GitHub Actions scraper for Pagi bank
- * Uses @sparticuz/chromium for serverless-compatible Chrome
+ * Cross-platform: uses system Chrome on Windows, @sparticuz/chromium on Linux
  */
 
-import chromium from '@sparticuz/chromium';
+import { existsSync } from 'fs';
 import { createScraper, CompanyTypes } from 'israeli-bank-scrapers';
 import axios from 'axios';
 
 const SUPABASE_PUSH_URL = 'https://tzhhilhiheekhcpdexdc.supabase.co/functions/v1/bank-push';
 const SCRAPER_API_KEY = process.env.SCRAPER_API_KEY;
 const USER_ID = '16274024-a305-4416-ba62-9b321669d7d6';
+
+async function getChromePath() {
+  if (process.platform === 'win32') {
+    const candidates = [
+      'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+      'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) {
+        console.log('[Pagi] Using system Chrome:', p);
+        return p;
+      }
+    }
+    console.log('[Pagi] Chrome not found, letting puppeteer auto-detect');
+    return undefined;
+  } else {
+    // Linux: use @sparticuz/chromium (serverless binary)
+    const { default: chromium } = await import('@sparticuz/chromium');
+    const path = await chromium.executablePath();
+    console.log('[Pagi] Using @sparticuz/chromium:', path);
+    return path;
+  }
+}
 
 async function scrapeAndPush() {
   const username = process.env.PAGI_USERNAME;
@@ -20,7 +43,8 @@ async function scrapeAndPush() {
     password: password ? '✓' : '✗ MISSING',
     scraperKey: SCRAPER_API_KEY ? '✓' : '✗ MISSING',
     supabaseUrl: process.env.SUPABASE_URL ? '✓' : '✗ MISSING',
-    supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? '✓' : '✗ MISSING'
+    supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY ? '✓' : '✗ MISSING',
+    platform: process.platform,
   });
 
   if (!username || !password) throw new Error('Missing PAGI_USERNAME or PAGI_PASSWORD');
@@ -28,9 +52,7 @@ async function scrapeAndPush() {
 
   console.log('[Pagi] Starting scrape at', new Date().toISOString());
 
-  // Use @sparticuz/chromium for serverless-compatible binary
-  const executablePath = await chromium.executablePath();
-  console.log('[Pagi] Chrome path:', executablePath);
+  const executablePath = await getChromePath();
 
   try {
     const scraperOptions = {
@@ -38,11 +60,14 @@ async function scrapeAndPush() {
       startDate: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000),
       combineInstallments: false,
       showBrowser: false,
-      headless: chromium.headless,
-      executablePath,
-      args: chromium.args,
-      timeout: 60000,
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      timeout: 90000,
     };
+
+    if (executablePath) {
+      scraperOptions.executablePath = executablePath;
+    }
 
     const scraper = createScraper(scraperOptions);
 
@@ -68,13 +93,10 @@ async function scrapeAndPush() {
         fetched_at: new Date().toISOString(),
       };
 
-      console.log(`[Pagi] Pushing ${payload.transactions.length} transactions...`);
+      console.log(`[Pagi] Pushing ${payload.transactions.length} transactions for account ${payload.account_id}...`);
 
       const res = await axios.post(SUPABASE_PUSH_URL, payload, {
-        headers: {
-          'x-scraper-api-key': SCRAPER_API_KEY,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'x-scraper-api-key': SCRAPER_API_KEY, 'Content-Type': 'application/json' },
         timeout: 30000,
       });
 
