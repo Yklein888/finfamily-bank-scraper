@@ -258,6 +258,44 @@ function autoCategorizeTxn(description) {
   return null;
 }
 
+// Initialize database tables on startup
+async function initializeDatabase() {
+  try {
+    const sb = getSupabase();
+
+    // Create bank_connections table if it doesn't exist
+    const { error } = await sb.rpc('exec_sql', {
+      query: `
+        CREATE TABLE IF NOT EXISTS bank_connections (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID NOT NULL,
+          provider TEXT NOT NULL,
+          encrypted_credentials TEXT NOT NULL,
+          auto_sync BOOLEAN DEFAULT false,
+          created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+          UNIQUE(user_id, provider)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_bank_connections_auto_sync ON bank_connections(auto_sync);
+        CREATE INDEX IF NOT EXISTS idx_bank_connections_user_id ON bank_connections(user_id);
+      `
+    });
+
+    if (error) {
+      // Table might already exist, which is fine
+      console.log('[Init] Database initialization note:', error.message);
+    } else {
+      console.log('[Init] Database tables verified/created successfully');
+    }
+  } catch (err) {
+    console.log('[Init] Database initialization skipped:', err.message);
+  }
+}
+
+// Initialize on startup
+initializeDatabase();
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'FinFamily Bank Scraper', timestamp: new Date(), chromium: !!chromium });
 });
