@@ -2,8 +2,8 @@ name: Trigger Render Sync
 
 on:
   schedule:
-    # כל 6 שעות
-    - cron: '0 */6 * * *'
+    # כל שעה בדקה 0
+    - cron: '0 * * * *'
   workflow_dispatch: # אפשר גם להריץ ידנית
 
 jobs:
