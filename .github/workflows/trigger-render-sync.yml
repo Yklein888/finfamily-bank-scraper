@@ -1,0 +1,25 @@
+name: Trigger Render Sync
+
+on:
+  schedule:
+    # כל 6 שעות
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # אפשר גם להריץ ידנית
+
+jobs:
+  trigger-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Wake Render & Trigger Bank Sync
+        run: |
+          echo "⏰ Triggering Render sync..."
+          curl -X POST https://finfamily-bank-scraper-1.onrender.com/sync-all \
+            -H "Content-Type: application/json" \
+            -d '{"adminKey":"${{ secrets.RENDER_ADMIN_KEY }}"}' \
+            -v
+
+      - name: Check response
+        if: failure()
+        run: echo "❌ Sync trigger failed - check Render logs"
