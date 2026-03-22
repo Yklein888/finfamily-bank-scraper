@@ -345,11 +345,15 @@ async function logSyncAttempt(userId, provider, status, errorMessage = null, tra
 
 // Save bank credentials for auto-sync
 app.post('/add-bank-connection', async (req, res) => {
-  const user = await verifyAuthToken(req);
-  if (!user) return res.status(401).json({ error: 'Authentication failed' });
+  const { adminKey, provider, credentials, auto_sync, user_id } = req.body;
 
-  const { provider, credentials, auto_sync } = req.body;
+  // Validate admin key
+  if (adminKey !== process.env.ADMIN_KEY) {
+    return res.status(401).json({ error: 'Unauthorized - invalid adminKey' });
+  }
+
   if (!provider || !credentials) return res.status(400).json({ error: 'Missing provider or credentials' });
+  if (!user_id) return res.status(400).json({ error: 'Missing user_id' });
 
   const providerType = PROVIDER_MAP[provider];
   if (!providerType) return res.status(400).json({ error: 'Unsupported provider: ' + provider });
@@ -360,7 +364,7 @@ app.post('/add-bank-connection', async (req, res) => {
 
     // Save to bank_connections table for auto-sync
     const { data, error } = await getSupabase().from('bank_connections').upsert({
-      user_id: user.id,
+      user_id: user_id,
       provider: provider,
       encrypted_credentials: encryptedCreds,
       auto_sync: auto_sync !== false, // default to true
@@ -373,12 +377,13 @@ app.post('/add-bank-connection', async (req, res) => {
       return res.status(500).json({ success: false, error: error.message });
     }
 
-    console.log('[ADD-BANK-CONNECTION] Saved ' + provider + ' credentials for user ' + user.id + ' with auto_sync=' + (auto_sync !== false));
+    console.log('[ADD-BANK-CONNECTION] Saved ' + provider + ' credentials for user ' + user_id + ' with auto_sync=' + (auto_sync !== false));
     res.json({
       success: true,
       message: 'Bank connection saved for auto-sync',
       provider,
-      auto_sync: auto_sync !== false
+      auto_sync: auto_sync !== false,
+      user_id
     });
   } catch (error) {
     console.error('[ADD-BANK-CONNECTION] Error:', error.message);
