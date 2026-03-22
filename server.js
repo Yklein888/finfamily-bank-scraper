@@ -363,14 +363,18 @@ app.post('/add-bank-connection', async (req, res) => {
     const encryptedCreds = Buffer.from(JSON.stringify(credentials)).toString('base64');
 
     // Save to bank_connections table for auto-sync
-    const { data, error } = await getSupabase().from('bank_connections').upsert({
+    // First try to delete existing connection
+    await getSupabase().from('bank_connections').delete().eq('user_id', user_id).eq('provider', provider);
+
+    // Then insert new one
+    const { data, error } = await getSupabase().from('bank_connections').insert({
       user_id: user_id,
       provider: provider,
       encrypted_credentials: encryptedCreds,
       auto_sync: auto_sync !== false, // default to true
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id,provider' });
+    });
 
     if (error) {
       console.error('[ADD-BANK-CONNECTION] Upsert error:', error);
