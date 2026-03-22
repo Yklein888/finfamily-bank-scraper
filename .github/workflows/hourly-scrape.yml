@@ -20,12 +20,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Chromium
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y chromium-browser 2>/dev/null || sudo apt-get install -y chromium 2>/dev/null || true
-          which chromium-browser || which chromium || echo "chromium not found via apt"
-
       - name: Run Pagi Scraper
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -33,7 +27,6 @@ jobs:
           PAGI_USERNAME: ${{ secrets.PAGI_USERNAME }}
           PAGI_PASSWORD: ${{ secrets.PAGI_PASSWORD }}
           SCRAPER_API_KEY: ${{ secrets.SCRAPER_API_KEY }}
-          PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium-browser
         run: node scripts/scrape-pagi.js
 
       - name: Upload logs on failure
