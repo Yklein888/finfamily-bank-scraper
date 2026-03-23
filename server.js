@@ -46,6 +46,9 @@ const PROVIDER_DISPLAY_NAME = {
   pagi: 'Pagi',
 };
 
+const DEFAULT_TXN_PREVIEW_LIMIT = 5;
+const MAX_TXN_PREVIEW_LIMIT = 20;
+
 // Chrome binary - try @sparticuz/chromium first
 let chromium = null;
 (async () => {
@@ -650,7 +653,9 @@ app.get('/debug/latest-data', async (req, res) => {
   if (!user) return res.status(401).json({ error: 'Authentication failed' });
 
   const rawLimit = parseInt(req.query.limit, 10);
-  const perAccountLimit = (!isNaN(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 20) : 5);
+  const perAccountLimit = (!isNaN(rawLimit) && rawLimit > 0
+    ? Math.min(rawLimit, MAX_TXN_PREVIEW_LIMIT)
+    : DEFAULT_TXN_PREVIEW_LIMIT);
 
   try {
     const { data: accounts, error: accountsError } = await getSupabase()
@@ -664,45 +669,61 @@ app.get('/debug/latest-data', async (req, res) => {
     }
 
     if (!accounts || accounts.length === 0) {
-      return res.json({ success: true, accounts: [], sampleSizePerAccount: perAccountLimit, message: 'No accounts found for user' });
-    }
-
-    const accountIds = accounts.map(a => a.id);
-    const txnLimit = perAccountLimit * accountIds.length;
-    const { data: txns, error: txnsError } = await getSupabase()
-      .from('transactions')
-      .select('account_id, amount, type, description, transaction_date')
-      .in('account_id', accountIds)
-      .order('transaction_date', { ascending: false })
-      .limit(txnLimit);
-
-    if (txnsError) {
-      throw new Error(txnsError.message || 'Failed to load transactions');
+      return res.json({
+        success: true,
+        partial: false,
+        accounts: [],
+        sampleSizePerAccount: perAccountLimit,
+        transactionErrors: [],
+        message: 'No accounts found for user'
+      });
     }
 
     const txnsByAccount = {};
-    for (const txn of (txns || [])) {
-      if (!txnsByAccount[txn.account_id]) txnsByAccount[txn.account_id] = [];
-      txnsByAccount[txn.account_id].push({
-        date: txn.transaction_date,
-        amount: txn.amount,
-        type: txn.type,
-        description: txn.description,
-      });
-    }
+    const txnErrors = [];
+    await Promise.all(accounts.map(async acc => {
+      try {
+        const { data: accTxns, error: txnsError } = await getSupabase()
+          .from('transactions')
+          .select('amount, type, description, transaction_date')
+          .eq('account_id', acc.id)
+          .order('transaction_date', { ascending: false })
+          .limit(perAccountLimit);
+
+        if (txnsError) {
+          throw new Error(txnsError.message || 'Failed to load transactions for account');
+        }
+
+        txnsByAccount[acc.id] = (accTxns || []).map(txn => ({
+          date: txn.transaction_date,
+          amount: txn.amount,
+          type: txn.type,
+          description: txn.description,
+        }));
+      } catch (err) {
+        txnErrors.push({
+          accountId: acc.id,
+          accountNumber: acc.account_number,
+          bank: acc.bank_name,
+          message: err.message || 'Failed to load transactions for account'
+        });
+      }
+    }));
 
     const preview = accounts.map(acc => ({
       bank: acc.bank_name,
       accountNumber: acc.account_number,
       balance: acc.balance,
       lastSync: acc.last_sync,
-      transactions: (txnsByAccount[acc.id] || []).slice(0, perAccountLimit),
+      transactions: txnsByAccount[acc.id] || [],
     }));
 
     res.json({
-      success: true,
+      success: txnErrors.length === 0,
+      partial: txnErrors.length > 0,
       sampleSizePerAccount: perAccountLimit,
       accounts: preview,
+      transactionErrors: txnErrors,
     });
   } catch (error) {
     console.error('[DEBUG-LATEST-DATA] Error:', error.message);
@@ -728,7 +749,7 @@ app.post('/sync-all-banks', async (req, res) => {
     // Fetch stored connections (with credentials) for this user
     const { data: connections, error: connError } = await getSupabase()
       .from('bank_connections')
-      .select('provider, encrypted_credentials, auto_sync')
+      .select('provider, encrypted_credentials')
       .eq('user_id', user.id)
       .eq('auto_sync', true);
 
