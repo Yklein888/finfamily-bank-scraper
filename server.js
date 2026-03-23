@@ -644,6 +644,72 @@ app.post('/debug/scrape-pagi', async (req, res) => {
   }
 });
 
+// Debug endpoint: return recent synced data for the authenticated user (to verify real data exists)
+app.get('/debug/latest-data', async (req, res) => {
+  const user = await verifyAuthToken(req);
+  if (!user) return res.status(401).json({ error: 'Authentication failed' });
+
+  const rawLimit = parseInt(req.query.limit, 10);
+  const perAccountLimit = (!isNaN(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 20) : 5);
+
+  try {
+    const { data: accounts, error: accountsError } = await getSupabase()
+      .from('accounts')
+      .select('id, bank_name, account_number, balance, last_sync')
+      .eq('user_id', user.id)
+      .order('last_sync', { ascending: false });
+
+    if (accountsError) {
+      throw new Error(accountsError.message || 'Failed to load accounts');
+    }
+
+    if (!accounts || accounts.length === 0) {
+      return res.json({ success: true, accounts: [], sampleSizePerAccount: perAccountLimit, message: 'No accounts found for user' });
+    }
+
+    const accountIds = accounts.map(a => a.id);
+    const txnLimit = perAccountLimit * accountIds.length;
+    const { data: txns, error: txnsError } = await getSupabase()
+      .from('transactions')
+      .select('account_id, amount, type, description, transaction_date')
+      .in('account_id', accountIds)
+      .order('transaction_date', { ascending: false })
+      .limit(txnLimit);
+
+    if (txnsError) {
+      throw new Error(txnsError.message || 'Failed to load transactions');
+    }
+
+    const txnsByAccount = {};
+    for (const txn of (txns || [])) {
+      if (!txnsByAccount[txn.account_id]) txnsByAccount[txn.account_id] = [];
+      txnsByAccount[txn.account_id].push({
+        date: txn.transaction_date,
+        amount: txn.amount,
+        type: txn.type,
+        description: txn.description,
+      });
+    }
+
+    const preview = accounts.map(acc => ({
+      bank: acc.bank_name,
+      accountNumber: acc.account_number,
+      balance: acc.balance,
+      lastSync: acc.last_sync,
+      transactions: (txnsByAccount[acc.id] || []).slice(0, perAccountLimit),
+    }));
+
+    res.json({
+      success: true,
+      sampleSizePerAccount: perAccountLimit,
+      accounts: preview,
+    });
+  } catch (error) {
+    console.error('[DEBUG-LATEST-DATA] Error:', error.message);
+    res.status(500).json({ success: false, error: error.message || 'Failed to load data' });
+  }
+});
+
 // Sync all banks for authenticated user (uses stored credentials)
 app.post('/sync-all-banks', async (req, res) => {
   const user = await verifyAuthToken(req);
