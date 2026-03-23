@@ -33,7 +33,9 @@ function getSupabase() {
 const PROVIDER_MAP = {
   'hapoalim': CompanyTypes.hapoalim,
   'visaCal':  CompanyTypes.visaCal,
+  'cal':      CompanyTypes.visaCal,  // Alias for Cal
   'fibi':     CompanyTypes.pagi,     // Frontend sends 'fibi', maps to pagi in v6
+  'pagi':     CompanyTypes.pagi,     // Explicit Pagi alias
 };
 
 // Chrome binary - try @sparticuz/chromium first
