@@ -5,6 +5,7 @@ import cron from 'node-cron';
 import { createClient } from '@supabase/supabase-js';
 import { CompanyTypes, createScraper } from 'israeli-bank-scrapers';
 import { scrapePagi } from './scrapers/pagi-custom.js';
+import rateLimit from 'express-rate-limit';
 
 dotenv.config();
 
@@ -48,6 +49,20 @@ const PROVIDER_DISPLAY_NAME = {
 
 const DEFAULT_TXN_PREVIEW_LIMIT = 5;
 const MAX_TXN_PREVIEW_LIMIT = 20;
+const RATE_LIMIT_WINDOW_MS = (() => {
+  const val = parseInt(process.env.DEBUG_RATE_LIMIT_WINDOW_MS || '', 10);
+  return Number.isFinite(val) && val > 0 ? val : 60_000;
+})();
+const RATE_LIMIT_MAX_REQUESTS = (() => {
+  const val = parseInt(process.env.DEBUG_RATE_LIMIT_MAX || '', 10);
+  return Number.isFinite(val) && val > 0 ? val : 5;
+})();
+const latestDataLimiter = rateLimit({
+  windowMs: RATE_LIMIT_WINDOW_MS,
+  max: RATE_LIMIT_MAX_REQUESTS,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Chrome binary - try @sparticuz/chromium first
 let chromium = null;
@@ -648,7 +663,7 @@ app.post('/debug/scrape-pagi', async (req, res) => {
 });
 
 // Debug endpoint: return recent synced data for the authenticated user (to verify real data exists)
-app.get('/debug/latest-data', async (req, res) => {
+app.get('/debug/latest-data', latestDataLimiter, async (req, res) => {
   const user = await verifyAuthToken(req);
   if (!user) return res.status(401).json({ error: 'Authentication failed' });
 
@@ -732,6 +747,7 @@ app.get('/debug/latest-data', async (req, res) => {
 });
 
 // Sync all banks for authenticated user (uses stored credentials)
+// bank_connections is the source of truth for credentials with auto_sync=true; open_banking_connections stores UI-facing status that gets updated after each sync attempt.
 app.post('/sync-all-banks', async (req, res) => {
   const user = await verifyAuthToken(req);
   if (!user) return res.status(401).json({ error: 'Authentication failed' });
