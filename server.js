@@ -674,6 +674,8 @@ app.post('/sync-all-banks', async (req, res) => {
     for (const conn of (connections || [])) {
       const connStartTime = Date.now();
       const provider = conn.provider;
+      const providerName = PROVIDER_DISPLAY_NAME[provider] || provider;
+      const upsertOptions = { onConflict: 'user_id,provider_code' };
 
       try {
         const providerType = PROVIDER_MAP[provider];
@@ -686,7 +688,7 @@ app.post('/sync-all-banks', async (req, res) => {
           // Credentials are stored as base64-encoded JSON (legacy column name 'encrypted_credentials'; TODO: replace with real encryption)
           credentials = JSON.parse(Buffer.from(conn.encrypted_credentials, 'base64').toString());
         } catch (e) {
-          throw new Error('Invalid stored credentials for provider ' + provider + ': ' + (e?.message || 'parse error'));
+          throw new Error('Invalid stored credentials for provider ' + provider + ': ' + ((e && e.message) || 'parse error'));
         }
 
         console.log('[SYNC-ALL-BANKS] Scraping ' + provider + ' for user ' + user.id);
@@ -695,7 +697,6 @@ app.post('/sync-all-banks', async (req, res) => {
 
         // Update connection status on success
         const providerName = PROVIDER_DISPLAY_NAME[provider] || provider;
-        const upsertOptions = { onConflict: 'user_id,provider_code' };
         await getSupabase().from('open_banking_connections').upsert({
           user_id: user.id,
           provider_name: providerName,
@@ -720,8 +721,6 @@ app.post('/sync-all-banks', async (req, res) => {
         const duration = Date.now() - connStartTime;
         await logSyncAttempt(user.id, provider, 'failed', err.message, 0);
         // Mark connection as failed to reflect current status in UI
-        const providerName = PROVIDER_DISPLAY_NAME[provider] || provider;
-        const upsertOptions = { onConflict: 'user_id,provider_code' };
         await getSupabase().from('open_banking_connections').upsert({
           user_id: user.id,
           provider_name: providerName,
