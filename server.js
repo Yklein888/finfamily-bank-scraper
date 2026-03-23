@@ -661,8 +661,9 @@ app.post('/sync-all-banks', async (req, res) => {
     // Fetch stored connections (with credentials) for this user
     const { data: connections, error: connError } = await getSupabase()
       .from('bank_connections')
-      .select('provider, encrypted_credentials')
-      .eq('user_id', user.id);
+      .select('provider, encrypted_credentials, auto_sync')
+      .eq('user_id', user.id)
+      .eq('auto_sync', true);
 
     if (connError) {
       throw new Error(connError.message || 'Failed to load bank connections');
@@ -682,7 +683,7 @@ app.post('/sync-all-banks', async (req, res) => {
 
         let credentials;
         try {
-          // Credentials are stored as base64-encoded JSON (not encrypted)
+          // Credentials are stored as base64-encoded JSON (legacy column name 'encrypted_credentials'; TODO: replace with real encryption)
           credentials = JSON.parse(Buffer.from(conn.encrypted_credentials, 'base64').toString());
         } catch (e) {
           throw new Error('Invalid stored credentials for provider ' + provider);
@@ -693,9 +694,10 @@ app.post('/sync-all-banks', async (req, res) => {
         const stats = await saveTransactionsToSupabase(user.id, accounts, provider);
 
         // Update connection status
+        const providerName = PROVIDER_DISPLAY_NAME[provider] || provider || 'Unknown provider';
         await getSupabase().from('open_banking_connections').upsert({
           user_id: user.id,
-          provider_name: PROVIDER_DISPLAY_NAME[provider] || provider,
+          provider_name: providerName,
           provider_code: provider,
           connection_status: 'active',
           last_sync: new Date().toISOString(),
