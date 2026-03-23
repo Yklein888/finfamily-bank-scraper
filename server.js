@@ -33,7 +33,9 @@ function getSupabase() {
 const PROVIDER_MAP = {
   'hapoalim': CompanyTypes.hapoalim,
   'visaCal':  CompanyTypes.visaCal,
-  'fibi':     CompanyTypes.pagi,     // Frontend sends 'fibi', maps to pagi in v6
+  'cal':      CompanyTypes.visaCal,   // Alias used by some clients
+  'fibi':     CompanyTypes.pagi,      // Frontend sends 'fibi', maps to pagi in v6
+  'pagi':     CompanyTypes.pagi,      // Explicit pagi provider
 };
 
 // Chrome binary - try @sparticuz/chromium first
@@ -634,7 +636,7 @@ app.post('/debug/scrape-pagi', async (req, res) => {
   }
 });
 
-// Sync all banks for authenticated user (Pagi + Cal + Hapoalim)
+// Sync all banks for authenticated user (uses stored credentials)
 app.post('/sync-all-banks', async (req, res) => {
   const user = await verifyAuthToken(req);
   if (!user) return res.status(401).json({ error: 'Authentication failed' });
@@ -648,64 +650,48 @@ app.post('/sync-all-banks', async (req, res) => {
   const results = [];
 
   try {
-    // Get all active connections for this user
-    const { data: connections } = await getSupabase()
-      .from('open_banking_connections')
+    // Fetch stored connections (with credentials) for this user
+    const { data: connections, error: connError } = await getSupabase()
+      .from('bank_connections')
       .select('*')
-      .eq('user_id', user.id)
-      .eq('connection_status', 'active');
+      .eq('user_id', user.id);
 
-    console.log('[SYNC-ALL-BANKS] Starting sync for user ' + user.id + ' with ' + (connections?.length || 0) + ' active connections');
+    if (connError) {
+      throw new Error(connError.message || 'Failed to load bank connections');
+    }
 
-    // Sync each connected bank
+    console.log('[SYNC-ALL-BANKS] Starting sync for user ' + user.id + ' with ' + (connections?.length || 0) + ' saved connections');
+
     for (const conn of (connections || [])) {
       const connStartTime = Date.now();
-      const provider = conn.provider_code;
+      const provider = conn.provider;
 
       try {
-        let credentials = {};
-        let providerType;
-
-        // Get credentials from environment variables based on provider
-        if (provider === 'pagi') {
-          const username = process.env.PAGI_USERNAME;
-          const password = process.env.PAGI_PASSWORD;
-          if (!username || !password) {
-            throw new Error('Missing PAGI credentials in environment');
-          }
-          credentials = { username, password };
-          providerType = CompanyTypes.pagi;
-        } else if (provider === 'cal' || provider === 'visaCal') {
-          const username = process.env.CAL_USERNAME;
-          const password = process.env.CAL_PASSWORD;
-          if (!username || !password) {
-            throw new Error('Missing CAL credentials in environment');
-          }
-          credentials = { username, password };
-          providerType = CompanyTypes.visaCal;
-        } else if (provider === 'hapoalim') {
-          const username = process.env.HAPOALIM_USERNAME;
-          const password = process.env.HAPOALIM_PASSWORD;
-          if (!username || !password) {
-            throw new Error('Missing Hapoalim credentials in environment');
-          }
-          credentials = { username, password };
-          providerType = CompanyTypes.hapoalim;
-        } else {
+        const providerType = PROVIDER_MAP[provider];
+        if (!providerType) {
           throw new Error('Unsupported provider: ' + provider);
         }
 
-        // Scrape the bank
+        let credentials;
+        try {
+          credentials = JSON.parse(Buffer.from(conn.encrypted_credentials, 'base64').toString());
+        } catch (e) {
+          throw new Error('Invalid stored credentials for provider ' + provider);
+        }
+
         console.log('[SYNC-ALL-BANKS] Scraping ' + provider + ' for user ' + user.id);
         const accounts = await scrapeProvider(providerType, credentials);
         const stats = await saveTransactionsToSupabase(user.id, accounts, provider);
 
         // Update connection status
-        await getSupabase().from('open_banking_connections').update({
+        await getSupabase().from('open_banking_connections').upsert({
+          user_id: user.id,
+          provider_name: provider,
+          provider_code: provider,
           connection_status: 'active',
           last_sync: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-        }).eq('user_id', user.id).eq('provider_code', provider);
+        }, { onConflict: 'user_id,provider_code' });
 
         const duration = Date.now() - connStartTime;
         await logSyncAttempt(user.id, provider, 'success', null, stats.totalSaved);
