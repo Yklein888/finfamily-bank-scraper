@@ -656,6 +656,7 @@ app.post('/sync-all-banks', async (req, res) => {
 
   const startTime = Date.now();
   const results = [];
+  const upsertOptions = { onConflict: 'user_id,provider_code' };
 
   try {
     // Fetch stored connections (with credentials) for this user
@@ -675,7 +676,6 @@ app.post('/sync-all-banks', async (req, res) => {
       const connStartTime = Date.now();
       const provider = conn.provider;
       const providerName = PROVIDER_DISPLAY_NAME[provider] || provider;
-      const upsertOptions = { onConflict: 'user_id,provider_code' };
 
       try {
         const providerType = PROVIDER_MAP[provider];
@@ -688,7 +688,7 @@ app.post('/sync-all-banks', async (req, res) => {
           // Credentials are stored as base64-encoded JSON (legacy column name 'encrypted_credentials'; TODO: replace with real encryption)
           credentials = JSON.parse(Buffer.from(conn.encrypted_credentials, 'base64').toString());
         } catch (e) {
-          throw new Error('Invalid stored credentials for provider ' + provider + ': ' + (e.message || 'parse error'));
+          throw new Error('Invalid stored credentials for provider ' + provider);
         }
 
         console.log('[SYNC-ALL-BANKS] Scraping ' + provider + ' for user ' + user.id);
