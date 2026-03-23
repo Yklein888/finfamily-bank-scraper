@@ -694,7 +694,7 @@ app.post('/sync-all-banks', async (req, res) => {
         const stats = await saveTransactionsToSupabase(user.id, accounts, provider);
 
         // Update connection status
-        const providerName = PROVIDER_DISPLAY_NAME[provider] || provider || 'Unknown provider';
+        const providerName = PROVIDER_DISPLAY_NAME[provider] || provider;
         await getSupabase().from('open_banking_connections').upsert({
           user_id: user.id,
           provider_name: providerName,
