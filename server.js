@@ -686,7 +686,7 @@ app.post('/sync-all-banks', async (req, res) => {
           // Credentials are stored as base64-encoded JSON (legacy column name 'encrypted_credentials'; TODO: replace with real encryption)
           credentials = JSON.parse(Buffer.from(conn.encrypted_credentials, 'base64').toString());
         } catch (e) {
-          throw new Error('Invalid stored credentials for provider ' + provider);
+          throw new Error('Invalid stored credentials for provider ' + provider + ': ' + (e.message || 'unknown parse error'));
         }
 
         console.log('[SYNC-ALL-BANKS] Scraping ' + provider + ' for user ' + user.id);
