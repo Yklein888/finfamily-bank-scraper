@@ -38,6 +38,14 @@ const PROVIDER_MAP = {
   'pagi':     CompanyTypes.pagi,      // Explicit pagi provider
 };
 
+const PROVIDER_DISPLAY_NAME = {
+  hapoalim: 'Bank Hapoalim',
+  visaCal: 'Visa Cal',
+  cal: 'Visa Cal',
+  fibi: 'First International / Pagi',
+  pagi: 'Pagi',
+};
+
 // Chrome binary - try @sparticuz/chromium first
 let chromium = null;
 (async () => {
@@ -653,7 +661,7 @@ app.post('/sync-all-banks', async (req, res) => {
     // Fetch stored connections (with credentials) for this user
     const { data: connections, error: connError } = await getSupabase()
       .from('bank_connections')
-      .select('*')
+      .select('provider, encrypted_credentials')
       .eq('user_id', user.id);
 
     if (connError) {
@@ -674,6 +682,7 @@ app.post('/sync-all-banks', async (req, res) => {
 
         let credentials;
         try {
+          // Credentials are stored as base64-encoded JSON (not encrypted)
           credentials = JSON.parse(Buffer.from(conn.encrypted_credentials, 'base64').toString());
         } catch (e) {
           throw new Error('Invalid stored credentials for provider ' + provider);
@@ -686,7 +695,7 @@ app.post('/sync-all-banks', async (req, res) => {
         // Update connection status
         await getSupabase().from('open_banking_connections').upsert({
           user_id: user.id,
-          provider_name: provider,
+          provider_name: PROVIDER_DISPLAY_NAME[provider] || provider,
           provider_code: provider,
           connection_status: 'active',
           last_sync: new Date().toISOString(),
