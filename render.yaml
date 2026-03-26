@@ -1,16 +1,22 @@
 services:
   - type: web
     name: finfamily-bank-scraper
-    env: node
+    env: docker
     region: frankfurt
     plan: free
-    buildCommand: npm install
-    startCommand: node server.js
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
-        value: "true"
-      - key: PUPPETEER_SKIP_DOWNLOAD
-        value: "true"
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: API_SECRET_KEY
+        sync: false
+      - key: ADMIN_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
     healthCheckPath: /health
