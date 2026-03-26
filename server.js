@@ -287,6 +287,71 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'FinFamily Bank Scraper', timestamp: new Date(), chromium: !!chromium });
 });
 
+// Status endpoint - check database tables and cron status
+app.get('/status', async (req, res) => {
+  const status = {
+    timestamp: new Date().toISOString(),
+    chromium: !!chromium,
+    tables: {},
+    connections: null,
+    cron: {
+      scheduled: true,
+      nextRun: '2:00 AM Israel time (daily)'
+    }
+  };
+
+  try {
+    // Check bank_connections table
+    const { count: bankCount, error: bankError } = await getSupabase()
+      .from('bank_connections')
+      .select('*', { count: 'exact', head: true });
+    
+    if (bankError) {
+      status.tables.bank_connections = { exists: false, error: bankError.message };
+    } else {
+      status.tables.bank_connections = { exists: true, count: bankCount };
+    }
+
+    // Check open_banking_connections table
+    const { count: obcCount, error: obcError } = await getSupabase()
+      .from('open_banking_connections')
+      .select('*', { count: 'exact', head: true });
+    
+    if (obcError) {
+      status.tables.open_banking_connections = { exists: false, error: obcError.message };
+    } else {
+      status.tables.open_banking_connections = { exists: true, count: obcCount };
+    }
+
+    // Check sync_history table
+    const { count: syncCount, error: syncError } = await getSupabase()
+      .from('sync_history')
+      .select('*', { count: 'exact', head: true });
+    
+    if (syncError) {
+      status.tables.sync_history = { exists: false, error: syncError.message };
+    } else {
+      status.tables.sync_history = { exists: true, count: syncCount };
+    }
+
+    // Get active connections
+    const { data: activeConns } = await getSupabase()
+      .from('bank_connections')
+      .select('provider, auto_sync, created_at')
+      .eq('auto_sync', true);
+    
+    status.connections = {
+      total: bankCount || 0,
+      autoSync: activeConns?.length || 0
+    };
+
+  } catch (error) {
+    status.error = error.message;
+  }
+
+  res.json(status);
+});
+
 app.get('/providers', (req, res) => {
   res.json({
     banks: [
@@ -803,6 +868,7 @@ app.post('/sync-all', async (req, res) => {
   }
 });
 
+// Nightly cron job for auto-sync (2 AM Israel time)
 cron.schedule('0 2 * * *', async () => {
   console.log('[CRON] Nightly sync starting...');
   const startTime = Date.now();
@@ -810,21 +876,44 @@ cron.schedule('0 2 * * *', async () => {
   let totalFailed = 0;
 
   try {
-    const { data: connections } = await getSupabase().from('bank_connections').select('*').eq('auto_sync', true);
+    // Check if bank_connections table exists first
+    const { data: connections, error: connError } = await getSupabase()
+      .from('bank_connections')
+      .select('*')
+      .eq('auto_sync', true);
+
+    if (connError) {
+      console.error('[CRON] ⚠️  Cannot access bank_connections table:', connError.message);
+      console.error('[CRON] Make sure to run migrations in Supabase SQL Editor');
+      console.log('[CRON] Skipping nightly sync - no connections table');
+      return;
+    }
+
     console.log('[CRON] Found ' + (connections?.length || 0) + ' connections to sync');
 
-    for (const conn of (connections || [])) {
+    if (!connections || connections.length === 0) {
+      console.log('[CRON] No connections with auto_sync=true - nothing to do');
+      return;
+    }
+
+    for (const conn of connections) {
       const connStartTime = Date.now();
       try {
+        console.log('[CRON] Syncing ' + conn.provider + ' for user ' + conn.user_id);
+        
+        // Decrypt credentials
         const creds = JSON.parse(Buffer.from(conn.encrypted_credentials, 'base64').toString());
         const pt = PROVIDER_MAP[conn.provider];
+        
         if (!pt) {
           console.log('[CRON] Unsupported provider: ' + conn.provider);
+          await logSyncAttempt(conn.user_id, conn.provider, 'failed', 'Unsupported provider: ' + conn.provider, 0);
           continue;
         }
 
+        // Scrape bank data
         const accounts = await scrapeProvider(pt, creds);
-        const { totalSaved } = await saveTransactionsToSupabase(conn.user_id, accounts, conn.provider);
+        const { totalSaved, totalSkipped } = await saveTransactionsToSupabase(conn.user_id, accounts, conn.provider);
 
         // Update connection status to active
         await getSupabase().from('open_banking_connections').upsert({
@@ -838,23 +927,37 @@ cron.schedule('0 2 * * *', async () => {
 
         const duration = Date.now() - connStartTime;
         await logSyncAttempt(conn.user_id, conn.provider, 'success', null, totalSaved);
-        console.log('[CRON] ✓ ' + conn.provider + ' synced (' + totalSaved + ' transactions, ' + duration + 'ms)');
+        console.log('[CRON] ✓ ' + conn.provider + ' synced (' + totalSaved + ' saved, ' + totalSkipped + ' skipped, ' + duration + 'ms)');
         totalSucceeded++;
       } catch (err) {
         const duration = Date.now() - connStartTime;
+        console.error('[CRON] ✗ ' + conn.provider + ' failed after ' + duration + 'ms:', err.message);
+        
+        // Update connection status to failed
+        await getSupabase().from('open_banking_connections').upsert({
+          user_id: conn.user_id,
+          provider_name: conn.provider,
+          provider_code: conn.provider,
+          connection_status: 'failed',
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,provider_code' });
+        
         await logSyncAttempt(conn.user_id, conn.provider, 'failed', err.message, 0);
-        console.error('[CRON] ✗ ' + conn.provider + ' failed (' + duration + 'ms):', err.message);
         totalFailed++;
       }
     }
 
     const totalDuration = Date.now() - startTime;
-    console.log('[CRON] Done! Succeeded: ' + totalSucceeded + ', Failed: ' + totalFailed + ', Total: ' + totalDuration + 'ms');
+    console.log('[CRON] ====== Nightly sync complete ======');
+    console.log('[CRON] Succeeded: ' + totalSucceeded + ', Failed: ' + totalFailed + ', Total duration: ' + totalDuration + 'ms');
   } catch (error) {
     const totalDuration = Date.now() - startTime;
     console.error('[CRON] Fatal error after ' + totalDuration + 'ms:', error.message);
+    console.error('[CRON] Stack:', error.stack);
   }
 }, { timezone: 'Asia/Jerusalem' });
+
+console.log('[Cron] Nightly sync scheduled for 2:00 AM Israel time');
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
