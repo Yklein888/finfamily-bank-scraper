@@ -36,20 +36,33 @@ const PROVIDER_MAP = {
   'fibi':     CompanyTypes.pagi,     // Frontend sends 'fibi', maps to pagi in v6
 };
 
-// Chrome binary - try @sparticuz/chromium first
+// Chrome binary - support both @sparticuz/chromium and system Chrome
 let chromium = null;
+let chromeAvailable = false;
+
 (async () => {
+  // Try 1: @sparticuz/chromium (for serverless)
   try {
     chromium = (await import('@sparticuz/chromium')).default;
+    chromeAvailable = true;
+    console.log('[Init] ✓ Using @sparticuz/chromium');
   } catch (e) {
-    console.log('[Init] @sparticuz/chromium not available, will use PUPPETEER_EXECUTABLE_PATH or system Chrome');
+    // Try 2: System Chrome (Docker/Render with Dockerfile)
+    const systemChrome = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium';
+    const fs = await import('fs');
+    if (fs.existsSync(systemChrome)) {
+      chromeAvailable = true;
+      console.log('[Init] ✓ Using system Chrome at:', systemChrome);
+    } else {
+      console.log('[Init] ✗ No Chrome binary found');
+    }
   }
 })();
 
 async function getChromePath() {
   if (chromium) return await chromium.executablePath();
   if (process.env.PUPPETEER_EXECUTABLE_PATH) return process.env.PUPPETEER_EXECUTABLE_PATH;
-  return undefined;
+  return '/usr/bin/chromium';  // Default for Docker
 }
 
 async function scrapeProvider(providerType, credentials, attempt = 1) {
