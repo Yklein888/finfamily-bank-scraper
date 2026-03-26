@@ -38,7 +38,7 @@ export async function scrapePagi(credentials, execPath, args) {
 
     // Navigate to login page
     console.log('[Pagi] Navigating to login page...');
-    await page.goto(PAGI_LOGIN_URL, { waitUntil: 'networkidle2', timeout: 30000 });
+    await page.goto(PAGI_LOGIN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
 
     // Wait for and fill username field - try multiple possible selectors
     console.log('[Pagi] Entering credentials...');
@@ -155,7 +155,7 @@ export async function scrapePagi(credentials, execPath, args) {
 
     // Wait for navigation to complete
     console.log('[Pagi] Waiting for login to complete...');
-    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 40000 }).catch(e => {
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 90000 }).catch(e => {
       console.log('[Pagi] Navigation timeout (may be normal):', e.message);
     });
 
