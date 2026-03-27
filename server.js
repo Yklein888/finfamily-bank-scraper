@@ -34,6 +34,9 @@ const PROVIDER_MAP = {
   'hapoalim': CompanyTypes.hapoalim,
   'visaCal':  CompanyTypes.visaCal,
   'fibi':     CompanyTypes.pagi,     // Frontend sends 'fibi', maps to pagi in v6
+  'pagi':     CompanyTypes.pagi,     // Also support 'pagi' directly
+  'leumi':    CompanyTypes.pagi,     // Also support 'leumi' as alias
+  'cal':      CompanyTypes.visaCal,  // Also support 'cal' as alias
 };
 
 // Chrome binary - support both @sparticuz/chromium and system Chrome
